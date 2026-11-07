@@ -1,0 +1,11 @@
+{
+  "name": "cumulus-cloud",
+  "main": "workers/cloud.mjs",
+  "compatibility_date": "2026-11-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "binding": "ASSETS", "directory": ".output/public" },
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "vars": {
+    "CUMULUS_SUPABASE_URL": "https://ivqiskeziohbbtkcvlun.supabase.co"
+  }
+}

@@ -391,7 +391,7 @@ async function route(drive, options, req, res, url) {
       projectBytes: drive.limits.projectBytes,
       maxFileBytes: drive.limits.maxFileBytes,
       pausesWhenInactiveIfSwappedToSupabaseFreePlan: drive.limits.pausesWhenInactiveIfSwappedToSupabaseFreePlan,
-      liveSupabase: false,
+      liveSupabase: drive.storage.kind === "supabase",
     });
     return 200;
   }

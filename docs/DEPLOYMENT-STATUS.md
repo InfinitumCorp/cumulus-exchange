@@ -15,8 +15,10 @@ The migration is checked in under `supabase/migrations/`.
 
 `CUMULUS_DEPLOY_TARGET=cloudflare npm run build` selects Nitro's Cloudflare
 module output while retaining the existing default build. The generated Worker
-configuration is `.output/server/wrangler.json`. Wrangler 4.158.0 can serve this
-output locally or deploy it using `wrangler deploy --config .output/server/wrangler.json`.
+configuration is `.output/server/wrangler.json`. The root `wrangler.jsonc`
+combines the frontend with the Drive Fetch handler. Use `npm run build:cloudflare`
+then Wrangler 4.158.0 with `deploy --config wrangler.jsonc`. A dry-run bundle
+passed (487 KB gzip), and the combined Worker runs in Wrangler's local runtime.
 
 The Drive backend now supports `CUMULUS_STORAGE_DRIVER=supabase`. Configure
 `CUMULUS_SUPABASE_URL`, `CUMULUS_SUPABASE_SECRET_KEY`, and optionally
@@ -28,9 +30,13 @@ The adapter stores the existing encrypted blobs, not plaintext files.
 
 - Authorize Cloudflare. The initial Wrangler check was unauthenticated. The
   official Cloudflare MCP server is registered and its OAuth flow was started.
-- Deploy the Drive backend on a compatible runtime, configure its Postgres
-  connection and encryption/signing secrets, and perform a real storage round trip.
-  Adding a Cloudflare frontend target does not port the Node Drive service to Workers.
+- Set Worker secrets `DATABASE_URL`, `CUMULUS_KMS_MASTER_KEY`,
+  `CUMULUS_BOOTSTRAP_TOKEN`, `CUMULUS_SHARE_SECRET`, and
+  `CUMULUS_SUPABASE_SECRET_KEY`. Use the Supabase Postgres pooler connection
+  string. The Worker uses request-scoped connections and a database advisory
+  transaction lock for shared quotas. Migrations run separately, never on requests.
+  The Worker caps files at 10 MB because existing encryption buffers bytes;
+  the Node service retains its 50 MB cap. Verify a real storage round trip.
 - Provision the Cumulus ID issuer and connect the frontend to authenticated
   Drive operations. The current frontend remains the browser-local Exchange demo.
 - Deploy frontend assets and configure DNS only after their origins work.
@@ -39,7 +45,10 @@ The adapter stores the existing encrypted blobs, not plaintext files.
 ## Verification limits
 
 Both repositories' frontend production builds and TypeScript checks passed.
-Nine existing non-container Drive tests and two new storage adapter tests passed.
+Thirteen non-container Drive tests passed, including binary upload/download,
+JWT verification, tenant isolation, deletes, CORS, and missing-secret handling
+through the Fetch bridge. The local Worker health route responds and the data
+API refuses missing configuration with HTTP 503.
 Mail's complete test command passed. Exchange's complete test command stops on
 missing `.grok/skills/og/references` template assets in the repository.
 Browser smoke checks render content but report an external resource certificate
