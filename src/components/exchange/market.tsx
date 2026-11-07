@@ -49,8 +49,8 @@ export function MarketView() {
         <div>
           <h1 className="pane-title">License opted-in data</h1>
           <p className="lede">
-            You keep 85%. One soulbound CDAT per sale. Military editions and government workloads
-            stay off this exchange.
+            Cumulus://Cloud is Cumulus Drive. You keep 85%. One soulbound CDAT per sale. Military
+            editions and government workloads stay off the product.
           </p>
         </div>
         <button className="btn" type="button" onClick={() => setCoverage((value) => !value)}>

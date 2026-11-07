@@ -38,15 +38,16 @@ export function ExchangeApp() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-kicker">Cumulus Drive</div>
+          <div className="brand-kicker">Infinitum · one product</div>
           <div className="brand-title">Cumulus://Cloud</div>
+          <div className="brand-sub">Cumulus Drive</div>
         </div>
         <div className="identity">
           <span className="hide-sm">{session.mail}</span>
           <span className="wallet">{money(wallet)}</span>
         </div>
       </header>
-      <nav className="nav desktop-nav" aria-label="Exchange">
+      <nav className="nav desktop-nav" aria-label="Cumulus://Cloud">
         {NAV.map((item) => (
           <button
             key={item.id}
@@ -68,7 +69,7 @@ export function ExchangeApp() {
           {view === "collect" && <CollectView />}
         </main>
       </div>
-      <nav className="tabbar" aria-label="Exchange">
+      <nav className="tabbar" aria-label="Cumulus://Cloud">
         {NAV.map((item) => (
           <button
             key={item.id}

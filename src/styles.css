@@ -41,6 +41,14 @@
     line-height: 1.15;
   }
 
+  .brand-sub {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
   .identity {
     display: flex;
     align-items: center;

@@ -50,8 +50,8 @@ export function CollectView() {
         <div>
           <h1 className="pane-title">Collectors</h1>
           <p className="lede">
-            Each software product can package an aggregate after you consent. Hardware platforms and
-            military editions do not feed this exchange. ei·det·ic publishes query volume only.
+            Each Infinitum product can package an aggregate after you consent. Hardware platforms and
+            military editions do not feed Cumulus://Cloud. ei·det·ic publishes query volume only.
           </p>
         </div>
       </div>
