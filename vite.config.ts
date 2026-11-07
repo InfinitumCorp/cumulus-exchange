@@ -30,6 +30,21 @@ function hasGlobbedMigrations(root: string): boolean {
  * migrations — no schema to apply — skips it entirely rather than paying for a
  * PGLite instance it never queries.
  */
+function cumulusDrivePreviewPlugin(): Plugin {
+  return {
+    name: "cumulus-drive-preview",
+    apply: "serve",
+    async configureServer(server) {
+      const { createDevPreview } = await import("./cloud/src/dev-preview.mjs");
+      const preview = await createDevPreview(join(server.config.root, "cloud/var/preview"));
+      server.middlewares.use((req, res, next) => preview.middleware(req, res, next));
+      server.httpServer?.once("close", () => {
+        void preview.close();
+      });
+    },
+  };
+}
+
 function pgliteBootstrapPlugin(): Plugin {
   return {
     name: "app-builder:pglite-bootstrap",
@@ -159,6 +174,7 @@ export default defineConfig(({ command, isPreview }) => ({
   resolve: { tsconfigPaths: true },
   plugins: [
     pgliteBootstrapPlugin(),
+    cumulusDrivePreviewPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
     // Dev-only /__app-env, read by scripts/check-auth-invariant.mjs.

@@ -31,7 +31,7 @@ import {
 } from "@/lib/exchange/model";
 import { seedBooks } from "@/lib/exchange/seed";
 
-export type View = "home" | "market" | "detail" | "licenses" | "ledger" | "query" | "collect";
+export type View = "home" | "drive" | "market" | "detail" | "licenses" | "ledger" | "query" | "collect";
 
 const STORAGE_KEY = "cumulus-exchange-v1";
 

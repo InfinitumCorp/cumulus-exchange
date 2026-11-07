@@ -68,7 +68,7 @@ export function HomeView() {
             key={surface.id}
             className="card surface"
             type="button"
-            onClick={() => setView(surface.id === "earn" ? "market" : "market")}
+            onClick={() => setView(surface.id === "store" ? "drive" : surface.id === "earn" ? "market" : "market")}
           >
             <span className="mono">{surface.kicker}</span>
             <h3>{surface.title}</h3>

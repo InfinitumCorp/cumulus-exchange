@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { CollectView } from "@/components/exchange/collect";
+import { DriveView } from "@/components/exchange/drive";
 import { DetailView } from "@/components/exchange/detail";
 import { HomeView } from "@/components/exchange/home";
 import { LedgerView } from "@/components/exchange/ledger";
@@ -11,6 +12,7 @@ import { session, useExchange, type View } from "@/lib/exchange/store";
 
 const NAV: { id: View; label: string; icon: string }[] = [
   { id: "home", label: "Cloud", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5" },
+  { id: "drive", label: "Drive", icon: "M4 4h16v16H4z" },
   { id: "market", label: "Market", icon: "M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" },
   { id: "licenses", label: "Licenses", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" },
   { id: "ledger", label: "Ledger", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
@@ -64,6 +66,7 @@ export function ExchangeApp() {
       <div className="workspace">
         <main className="main">
           {view === "home" && <HomeView />}
+          {view === "drive" && <DriveView />}
           {view === "market" && <MarketView />}
           {view === "detail" && <DetailView />}
           {view === "licenses" && <LicensesView />}

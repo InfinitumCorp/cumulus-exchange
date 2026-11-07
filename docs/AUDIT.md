@@ -22,6 +22,7 @@ A local Drive service under `cloud/`:
 - Keycloak JWT tenant isolation
 - backup and restore of the database rows and ciphertext blobs
 - `/healthz`, `/readyz`, and Prometheus text
+- a dev-only Drive screen in the preview (`/api/drive`) for the demo CID. Production startup does not mint that session.
 
 The Supabase project Infinitum Corp (`ivqiskeziohbbtkcvlun`, eu-west-1, free plan) is recorded only as a future swap target. Migrations are not applied to it. Tests use SQLite and, for the S3 stub and Postgres path, local containers only.
 
