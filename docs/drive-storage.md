@@ -17,7 +17,11 @@ unset DATABASE_URL
 npm run dev
 ```
 
-Generate `BETTER_AUTH_SECRET` on the machine. Do not commit it. Sign-in is email and password stored in the PGLite directory (`/api/auth/sign-up/email` and `/api/auth/sign-in/email`).
+Generate `BETTER_AUTH_SECRET` on the machine. Do not commit it. Local sign-in is email and password stored in the PGLite directory (`/api/auth/sign-up/email` and `/api/auth/sign-in/email`). `http://localhost:8080` stays a trusted origin. Leave `BETTER_AUTH_URL` unset for that local server.
+
+The public origin is the exact URL `https://cumuluscloud.app`. Set `BETTER_AUTH_URL` to that value only on the process that actually serves it. Session cookies stay `__Host-` names with no `Domain` attribute, so they are not shared with subdomains. These names are proposed only and are not trusted origins and not DNS records from this repo: `id.cumuluscloud.app`, `cloud.cumuluscloud.app`, `mail.cumuluscloud.app`.
+
+This app does not accept another product's session. Cumulus://ID single sign-on is not implemented here. The demo ledger address `demo.alex@cumuluscloud.app` is a label in the browser, not a mailbox and not a user row.
 
 Optional limits:
 
@@ -59,3 +63,5 @@ Callers use a `BlobStore` with `put`, `get`, `remove`, and `exists`. A future ad
 ## Limits
 
 One Node process. No hosted Vercel disk. No public bucket. Share tokens stop future reads when revoked; they do not interrupt a stream already in progress. Deleting an account is not implemented. Government or paid listing is not part of this surface. The browser demo ledger is not Drive.
+
+`https://cumuluscloud.app` is not delegated, certified, or serving this app from this repository. Before that host can answer, DNS has to be set at the registrar, TLS issued, and a self-hosted Node process pointed at the volume above with `BETTER_AUTH_URL=https://cumuluscloud.app`. Broker OAuth, if used, needs that exact callback registered on the broker. This repo does not do those steps. Email and password on localhost does not need them. Mail delivery is another repository. Proposed hosts `id.cumuluscloud.app`, `cloud.cumuluscloud.app`, and `mail.cumuluscloud.app` are not trusted origins and are not live DNS.

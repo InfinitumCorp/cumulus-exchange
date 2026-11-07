@@ -1,3 +1,5 @@
+import { DEMO_LEDGER_EMAIL } from "@/lib/auth/origins";
+
 export type ProductId =
   | "cumulus"
   | "scalus"
@@ -113,7 +115,8 @@ export interface Recipe {
 
 export const SESSION_CID = "cid_alex";
 export const SESSION_NAME = "Alex Rivera";
-export const SESSION_MAIL = "alex@cumulusmail.cloud";
+/** Browser demo label. Not a Cumulus://ID account and not a mailbox. */
+export const SESSION_MAIL = DEMO_LEDGER_EMAIL;
 export const GENESIS = "firmament_genesis";
 export const REV_SHARE = 85;
 

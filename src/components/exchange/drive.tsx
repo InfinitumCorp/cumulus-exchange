@@ -140,7 +140,7 @@ export function DriveView() {
         <div className="card">
           <div className="filters">
             <input className="field" aria-label="Name" placeholder="Name" value={name} onChange={(event) => setName(event.target.value)} />
-            <input className="field" aria-label="Email" placeholder="Email" value={email} onChange={(event) => setEmail(event.target.value)} />
+            <input className="field" aria-label="Email" placeholder="demo.you@cumuluscloud.app" value={email} onChange={(event) => setEmail(event.target.value)} />
             <input className="field" aria-label="Password" placeholder="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           </div>
           <div className="actions">

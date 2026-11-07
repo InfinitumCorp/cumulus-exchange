@@ -11,8 +11,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const blobRoot = await mkdtemp(path.join(tmpdir(), "cumulus-blob-"));
 const pgliteDir = await mkdtemp(path.join(tmpdir(), "cumulus-pg-"));
 const password = "test-password-1";
-const emailA = "ada@example.com";
-const emailB = "bea@example.com";
+const emailA = "demo.ada@cumuluscloud.app";
+const emailB = "demo.bea@cumuluscloud.app";
 
 process.env.CUMULUS_BLOB_ROOT = blobRoot;
 process.env.CUMULUS_PGLITE_DIR = pgliteDir;

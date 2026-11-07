@@ -7,7 +7,7 @@ Drive is private file storage inside Cumulus://Cloud:
 - Bytes: local directory `CUMULUS_BLOB_ROOT`, mode 0700/0600, no symlink roots, server-built keys only.
 - Metadata: file-backed PGLite at `CUMULUS_PGLITE_DIR` (not in-memory). `DATABASE_URL` is refused so this build cannot use hosted Postgres.
 - Hosted ephemeral disk (`VERCEL` or `GROK_PROJECT_ID`) is refused.
-- Identity: Better Auth email and password session. `dev-user` is rejected.
+- Identity: Better Auth email and password session on this app only. `dev-user` is rejected. The exact public origin is `https://cumuluscloud.app`. Proposed hosts `id.cumuluscloud.app`, `cloud.cumuluscloud.app`, and `mail.cumuluscloud.app` are not trusted origins and not live DNS. Cookies stay host-only. Cumulus://ID is not a cross-product session in this repo.
 - Quota is reserved in the same database transaction as the pending row, including in-flight uploads.
 - Shares are one file, explicit `consent: true`, expiring, stored as a hash, revoked by a database flag, and downloaded through the server. Presigned URLs are not issued.
 - `BlobStore` is the seam for a later R2 adapter. Copying existing bytes and switching config is still a migration.
