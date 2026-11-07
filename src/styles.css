@@ -1,3 +1,44 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #111820;
+  --color-paper: #ffffff;
+  --color-muted: #52606b;
+  --color-line: #d6dce1;
+  --color-accent: #2454dd;
+  --color-wash: #f3f5f7;
+  --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 0px;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    letter-spacing: -0.011em;
+    line-height: 1.5;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 22%, white);
+  }
+}
+
+@layer components {
   .shell {
     display: flex;
     height: 100dvh;
@@ -387,6 +428,13 @@
 
   .surface:active {
     background: var(--color-wash);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
   }
 
   .lede input[type="range"] {
