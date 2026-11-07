@@ -37,6 +37,8 @@ npm test
 
 `npm test` starts local Postgres and SeaweedFS with `cloud/deploy/docker-compose.yml` for the container tests. The filesystem and SQLite tests do not need those containers, but the S3 stub test does.
 
+`cloud/deploy/docker-compose.stack.yml` starts a real Keycloak (realm `cumulus`), Postgres, and the Drive process. CI runs `test/e2e-stack.test.mjs` against that stack with `CUMULUS_E2E=1`. Those tests log in through Keycloak with PKCE. They do not use a demo session. The stack is local only and is not a deploy.
+
 ## Environment for a future host
 
 Do not point these at the live project unless that swap has been explicitly approved.

@@ -46,7 +46,8 @@ const app = await createServer({
 });
 
 const port = Number(env.CUMULUS_PORT || 8092);
+const bind = env.CUMULUS_BIND || "127.0.0.1";
 const server = http.createServer(app.handle);
-server.listen(port, "127.0.0.1", () => {
-  console.log(JSON.stringify({ msg: "cumulus-drive listening", port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false }));
+server.listen(port, bind, () => {
+  console.log(JSON.stringify({ msg: "cumulus-drive listening", bind, port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false }));
 });
