@@ -5,6 +5,8 @@ node_modules
 screenshots
 artifacts
 dist
+.output
+.wrangler
 *.log
 .env
 .env.*

@@ -34,6 +34,11 @@ const app = await createServer({
   sqlitePath: env.DATABASE_URL ? undefined : path.join(dataDir, "drive.sqlite"),
   blobsDir: path.join(dataDir, "blobs"),
   storageDriver: env.CUMULUS_STORAGE_DRIVER || "filesystem",
+  supabase: {
+    url: env.CUMULUS_SUPABASE_URL,
+    secretKey: env.CUMULUS_SUPABASE_SECRET_KEY,
+    bucket: env.CUMULUS_SUPABASE_BUCKET || "cumulus-drive",
+  },
   s3: {
     endpoint: env.CUMULUS_S3_ENDPOINT,
     region: env.CUMULUS_S3_REGION || "us-east-1",

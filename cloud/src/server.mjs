@@ -6,6 +6,7 @@ import { createDrive, createHandler } from "./drive.mjs";
 import { parseMasterKey } from "./crypto.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
 import { loadConfig } from "./config.mjs";
+import { createSupabaseDriver } from "./supabase-storage.mjs";
 
 /**
  * Local Cumulus Drive. Default storage is the filesystem driver.
@@ -15,12 +16,17 @@ export async function createServer(options) {
   const db = options.db ?? (await openDatabase({ databaseUrl: options.databaseUrl, sqlitePath: options.sqlitePath }));
   let storage = options.storage;
   if (!storage) {
-    if (options.storageDriver === "s3") {
+    if (options.storageDriver === "supabase") {
+      assertNotLiveSupabase(options.supabase.url);
+      storage = createSupabaseDriver(options.supabase);
+    } else if (options.storageDriver === "s3") {
       assertNotLiveSupabase(options.s3.endpoint);
       storage = createS3Driver({ ...options.s3, loopbackOnly: options.s3.loopbackOnly === true });
       await storage.ensureBucket();
-    } else {
+    } else if (!options.storageDriver || options.storageDriver === "filesystem") {
       storage = createFilesystemDriver(options.blobsDir);
+    } else {
+      throw new Error(`Unsupported storage driver: ${options.storageDriver}`);
     }
   }
   const config = options.config ?? loadConfig(options.env ?? {});
