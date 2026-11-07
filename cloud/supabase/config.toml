@@ -1,0 +1,50 @@
+# Local Supabase stack for Cumulus Drive. This file does not point at the live project.
+project_id = "cumulus-drive"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "cumulus"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = false
+
+[inbucket]
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[storage.s3_protocol]
+enabled = true
+
+[storage.buckets.cumulus-drive]
+public = false
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:54321"
+additional_redirect_urls = ["https://cloud.cumuluscloud.app"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/custom_access_token_hook"
+
+[functions.drive]
+verify_jwt = false

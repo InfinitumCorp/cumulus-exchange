@@ -95,6 +95,25 @@ Set these on the Drive process. Defaults match the table above. See `.env.exampl
 
 Also required before the process will listen, and not DNS: `CUMULUS_KMS_MASTER_KEY`, `CUMULUS_BOOTSTRAP_TOKEN`, `CUMULUS_SHARE_SECRET`.
 
+## id.cumuluscloud.app and cloud.cumuluscloud.app
+
+Free launch does not publish these names. Supabase custom domains are a paid add-on, so Auth and the Drive function stay on the existing free project hostname. This repository does not create the DNS records, does not apply migrations to project `ivqiskeziohbbtkcvlun`, and does not deploy.
+
+| Name | Free origin | When to publish DNS | Cost |
+| --- | --- | --- | --- |
+| `id.cumuluscloud.app` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` (issuer and JWKS). Keycloak mode still expects this hostname once an ID origin exists. | After an ID origin exists. Do not CNAME this name at the Supabase project hostname. | Included. A Supabase custom domain is **Paid. Not required.** |
+| `cloud.cumuluscloud.app` | Drive function path `/functions/v1/drive` on the same project. Share links use this hostname via `CUMULUS_PUBLIC_BASE_URL`. | After a Drive origin exists. | Included. A Supabase custom domain is **Paid. Not required.** |
+
+Dashboard steps, later, when an origin exists. Until then, leave both names unpublished. **Cost of leaving them unpublished: none.**
+
+1. Cloudflare dashboard → `cumuluscloud.app` → DNS → Records → Add record.
+2. Add a CNAME named `id`. Target is the ID origin. Proxy status: Proxied (orange cloud), so Universal SSL serves `https://id.cumuluscloud.app`.
+3. Add a CNAME named `cloud`. Target is the Drive origin. Proxy status: Proxied, so `https://cloud.cumuluscloud.app` is covered by Universal SSL.
+4. SSL/TLS → Overview → Full. Edge Certificates → Minimum TLS Version → TLS 1.2. Turn on Always Use HTTPS.
+5. Do not point either CNAME at `ivqiskeziohbbtkcvlun.supabase.co` unless that exact hostname has a verified Supabase custom domain. Without the paid add-on, that CNAME fails TLS. It is not the launch setup.
+
+Supabase mode checks the project JWKS and takes `cid` from `app_metadata.cid`. Keycloak mode remains available and still uses `https://id.cumuluscloud.app` when that host is the issuer.
+
 ## What launch does not need
 
 - Publishing `id`, `cloud`, or `mail` before an origin exists. **Included when you do publish them.**

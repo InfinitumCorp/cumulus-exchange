@@ -39,6 +39,16 @@ npm test
 
 `cloud/deploy/docker-compose.stack.yml` starts a real Keycloak (realm `cumulus`), Postgres, and the Drive process. CI runs `test/e2e-stack.test.mjs` against that stack with `CUMULUS_E2E=1`. Those tests log in through Keycloak with PKCE. They do not use a demo session. The stack is local only and is not a deploy.
 
+## Supabase mode (local CLI only)
+
+`CUMULUS_AUTH_MODE=supabase` keeps the Keycloak path as the default and adds a second verifier. It checks Supabase Auth JWTs against the project JWKS (`ES256` or `RS256`) and reads `cid` from `app_metadata.cid`. A SQL custom access token hook (`public.custom_access_token_hook`) copies that claim from `cumulus.identities`. The live project ref is still refused.
+
+Metadata for that mode lives in schema `cumulus` under `cloud/supabase/migrations`. Every table has row level security. The Edge Function calls PostgREST with the user's Supabase JWT, so PostgREST sets the `authenticated` role and `request.jwt.claims` and the policies apply. The quota trigger enforces the tenant cap and the 50 MB file cap for that role. A share download checks the HMAC first, then reads through the service role.
+
+Storage uses the private bucket `cumulus-drive` through Supabase Storage's S3 endpoint. Object keys are `tenants/<tenantId>/<blobId>`, the same layout as the Node S3 driver. The local end-to-end test probes that driver against the CLI's S3 endpoint, then exercises the Drive API at `cloud/supabase/functions/drive`. CI runs `sh scripts/supabase-e2e.sh`, which starts that stack, resets only the local database, and covers login, upload, download, share, quota, delete, and tenant isolation. It does not link or deploy project `ivqiskeziohbbtkcvlun`.
+
+DNS for `id.cumuluscloud.app` and `cloud.cumuluscloud.app` is in `docs/cloudflare-dns-email.md`. Supabase custom domains are not required.
+
 ## Environment for a future host
 
 Do not point these at the live project unless that swap has been explicitly approved.
@@ -55,6 +65,6 @@ Do not point these at the live project unless that swap has been explicitly appr
 - `CUMULUS_PUBLIC_BASE_URL` (optional; derived from the cloud host)
 - `CUMULUS_CORS_ORIGINS` (optional exact origins; no wildcard)
 
-A CID string is not a credential. Callers need a Keycloak RS256 JWT whose `cid` claim is bound to a tenant, plus `x-cumulus-purpose` (`drive.read`, `drive.write`, or `drive.share`).
+A CID string is not a credential. Callers need a JWT bound to a tenant, plus `x-cumulus-purpose` (`drive.read`, `drive.write`, or `drive.share`). Keycloak mode requires an RS256 token whose `cid` claim is present. Supabase mode requires an Auth token whose `app_metadata.cid` was set by the hook.
 
 The live Supabase hostname and project ref are refused unless `CUMULUS_ALLOW_SUPABASE=I-understand-this-touches-prod`. That variable is not set anywhere in this repository.
