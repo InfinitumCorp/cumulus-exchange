@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "@blueprintjs/core/lib/css/blueprint.css";
+@import "@blueprintjs/icons/lib/css/blueprint-icons.css";
+@import "@blueprintjs/table/lib/css/table.css";
+@import "leaflet/dist/leaflet.css";
+@import "leaflet.markercluster/dist/MarkerCluster.css";
+@import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 
 @theme {
   --color-ink: #111820;
@@ -454,6 +460,85 @@
     height: 10rem;
   }
 
+  label.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .catalog-map-wrap {
+    margin: 0.6rem 0 0.8rem;
+  }
+
+  .catalog-map {
+    height: 280px;
+    width: 100%;
+    border: 1px solid var(--color-line);
+    background: var(--color-wash);
+  }
+
+  .catalog-table {
+    display: none;
+    height: 420px;
+    margin-bottom: 0.8rem;
+  }
+
+  .asset-pin,
+  .asset-cluster {
+    background: var(--color-accent);
+    border: 2px solid var(--color-paper);
+    border-radius: 999px;
+    color: var(--color-paper);
+    display: grid;
+    place-items: center;
+    font-size: 0.75rem;
+  }
+
+  .asset-pin-live {
+    background: var(--color-ink);
+  }
+
+  .offer-overlay {
+    background: var(--color-paper);
+    border: 1px solid var(--color-line);
+    color: var(--color-ink);
+    margin: 12vh auto 0;
+    max-width: 28rem;
+    padding: 1rem;
+  }
+
+  .cdat-fields {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0.4rem 0 0.7rem;
+  }
+
+  .cdat-fields div {
+    display: grid;
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+    gap: 0.4rem;
+  }
+
+  .cdat-fields dt {
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .cdat-fields dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  .drive-table {
+    width: 100%;
+    margin-top: 0.8rem;
+  }
+
   @media (min-width: 840px) {
     .desktop-nav {
       display: flex;
@@ -510,6 +595,14 @@
       grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 0.8fr);
     }
 
+    .catalog-table {
+      display: block;
+    }
+
+    .catalog-list {
+      display: none;
+    }
+
     .search {
       flex: 1 1 16rem;
     }
@@ -518,6 +611,19 @@
       flex: 0 0 auto;
     }
   }
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  letter-spacing: -0.011em;
+  line-height: 1.5;
+}
+
+.shell p {
+  margin: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

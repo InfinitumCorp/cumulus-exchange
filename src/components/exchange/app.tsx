@@ -1,16 +1,19 @@
 import { useEffect } from "react";
 import { CollectView } from "@/components/exchange/collect";
+import { DriveView } from "@/components/exchange/drive";
 import { DetailView } from "@/components/exchange/detail";
 import { HomeView } from "@/components/exchange/home";
 import { LedgerView } from "@/components/exchange/ledger";
 import { LicensesView } from "@/components/exchange/licenses";
 import { MarketView } from "@/components/exchange/market";
 import { QueryView } from "@/components/exchange/query";
-import { money } from "@/lib/exchange/model";
+import { HTMLSelect } from "@blueprintjs/core";
+import { money, PREVIEW_TENANTS } from "@/lib/exchange/model";
 import { session, useExchange, type View } from "@/lib/exchange/store";
 
 const NAV: { id: View; label: string; icon: string }[] = [
   { id: "home", label: "Cloud", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5" },
+  { id: "drive", label: "Drive", icon: "M4 4h16v16H4z" },
   { id: "market", label: "Market", icon: "M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" },
   { id: "licenses", label: "Licenses", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" },
   { id: "ledger", label: "Ledger", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
@@ -29,8 +32,11 @@ function Icon({ d }: { d: string }) {
 export function ExchangeApp() {
   const view = useExchange((state) => state.view);
   const wallet = useExchange((state) => state.walletUsd);
+  const actorCid = useExchange((state) => state.actorCid);
+  const setActor = useExchange((state) => state.setActor);
   const setView = useExchange((state) => state.setView);
   const hydrate = useExchange((state) => state.hydrate);
+  const actor = PREVIEW_TENANTS.find((tenant) => tenant.cid === actorCid);
 
   useEffect(() => {
     hydrate();
@@ -40,12 +46,24 @@ export function ExchangeApp() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-kicker">Infinitum · one product</div>
+          <div className="brand-kicker">Infinitum Corporation®</div>
           <div className="brand-title">Cumulus://Cloud</div>
           <div className="brand-sub">Cumulus Drive</div>
         </div>
         <div className="identity">
-          <span className="hide-sm">{session.mail}</span>
+          <HTMLSelect
+            aria-label="Preview tenant"
+            minimal
+            value={actorCid}
+            onChange={(event) => setActor(event.currentTarget.value)}
+          >
+            {PREVIEW_TENANTS.map((tenant) => (
+              <option key={tenant.cid} value={tenant.cid}>
+                {tenant.name}
+              </option>
+            ))}
+          </HTMLSelect>
+          <span className="hide-sm">{actor?.mail ?? session.mail}</span>
           <span className="wallet">{money(wallet)}</span>
         </div>
       </header>
@@ -64,6 +82,7 @@ export function ExchangeApp() {
       <div className="workspace">
         <main className="main">
           {view === "home" && <HomeView />}
+          {view === "drive" && <DriveView />}
           {view === "market" && <MarketView />}
           {view === "detail" && <DetailView />}
           {view === "licenses" && <LicensesView />}
