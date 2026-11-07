@@ -5,6 +5,7 @@ import { createKeycloakVerifier } from "./auth.mjs";
 import { createDrive, createHandler } from "./drive.mjs";
 import { parseMasterKey } from "./crypto.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
+import { loadConfig } from "./config.mjs";
 
 /**
  * Local Cumulus Drive. Default storage is the filesystem driver.
@@ -22,14 +23,15 @@ export async function createServer(options) {
       storage = createFilesystemDriver(options.blobsDir);
     }
   }
+  const config = options.config ?? loadConfig(options.env ?? {});
   const metrics = options.metrics ?? createMetrics();
   const verifier =
     options.verifier ??
     createKeycloakVerifier({
-      issuer: options.issuer,
-      audience: options.audience,
+      issuer: options.issuer ?? config.issuer,
+      audience: options.audience ?? config.audience,
       jwks: options.jwks,
-      jwksUrl: options.jwksUrl,
+      jwksUrl: options.jwks ? undefined : (options.jwksUrl ?? config.jwksUrl),
     });
   const drive = createDrive({
     db,
@@ -39,12 +41,14 @@ export async function createServer(options) {
     limits: options.limits,
     now: options.now,
     metrics,
+    publicBaseUrl: options.publicBaseUrl ?? config.publicBaseUrl,
   });
   const handle = createHandler(drive, {
     verifier,
     bootstrapToken: options.bootstrapToken,
     metrics,
     now: options.now,
+    corsOrigins: options.corsOrigins ?? config.corsOrigins,
   });
   return {
     drive,

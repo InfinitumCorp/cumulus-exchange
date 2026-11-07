@@ -4,6 +4,7 @@ import { LIMITS } from "./limits.mjs";
 import { authenticate, requirePurpose } from "./auth.mjs";
 import { createEnvelope, sha256, signShare, verifyShare } from "./crypto.mjs";
 import { log } from "./log.mjs";
+import { corsHeaders } from "./config.mjs";
 
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const NAME = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -214,10 +215,12 @@ export function createDrive(options) {
       [id, tenant.id, bucket, objectKey, new Date(exp * 1000).toISOString(), createdAt],
     );
     const sig = signShare(options.shareSecret, id, exp);
+    const base = String(options.publicBaseUrl || "").replace(/\/+$/, "");
+    const path = `/v1/shared?shareId=${encodeURIComponent(id)}&exp=${exp}&sig=${sig}`;
     return {
       shareId: id,
       expiresAt: new Date(exp * 1000).toISOString(),
-      url: `/v1/shared?shareId=${encodeURIComponent(id)}&exp=${exp}&sig=${sig}`,
+      url: `${base}${path}`,
     };
   }
 
@@ -323,8 +326,19 @@ function objectPath(pathname) {
 
 export function createHandler(drive, options) {
   const metrics = options.metrics;
+  const allowlist = options.corsOrigins ?? [];
   return async function handle(req, res) {
     const url = new URL(req.url || "/", "http://127.0.0.1");
+    const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+    const cors = corsHeaders(origin, allowlist);
+    const writeHead = res.writeHead.bind(res);
+    res.writeHead = (status, headers) => writeHead(status, { ...cors, ...(headers || {}) });
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      metrics?.request("drive", req.method, 204);
+      return;
+    }
     let status = 500;
     try {
       status = await route(drive, options, req, res, url);

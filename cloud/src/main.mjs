@@ -3,6 +3,7 @@ import path from "node:path";
 import { createServer, masterKeyFromEnv } from "./server.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
 import { LIMITS } from "./limits.mjs";
+import { loadConfig } from "./config.mjs";
 
 /**
  * Local process entry. Refuses the live Supabase project unless an explicit
@@ -15,21 +16,19 @@ for (const name of ["CUMULUS_KMS_MASTER_KEY", "CUMULUS_BOOTSTRAP_TOKEN", "CUMULU
     process.exit(1);
   }
 }
-if (!env.CUMULUS_KEYCLOAK_JWKS_URL && !env.CUMULUS_KEYCLOAK_JWKS_JSON) {
-  console.error("Keycloak JWKS is required. Refusing to start.");
-  process.exit(1);
-}
 if (env.CUMULUS_S3_ENDPOINT) assertNotLiveSupabase(env.CUMULUS_S3_ENDPOINT);
 if (env.DATABASE_URL) assertNotLiveSupabase(env.DATABASE_URL);
 
+const config = loadConfig(env);
 const dataDir = path.resolve(env.CUMULUS_DATA_DIR || "cloud/var");
 const app = await createServer({
+  config,
   masterKey: masterKeyFromEnv(env),
   bootstrapToken: env.CUMULUS_BOOTSTRAP_TOKEN,
   shareSecret: env.CUMULUS_SHARE_SECRET,
-  issuer: env.CUMULUS_KEYCLOAK_ISSUER,
-  audience: env.CUMULUS_KEYCLOAK_AUDIENCE || "cumulus-drive",
-  jwksUrl: env.CUMULUS_KEYCLOAK_JWKS_URL,
+  issuer: config.issuer,
+  audience: config.audience,
+  jwksUrl: env.CUMULUS_KEYCLOAK_JWKS_JSON ? undefined : config.jwksUrl,
   jwks: env.CUMULUS_KEYCLOAK_JWKS_JSON ? JSON.parse(env.CUMULUS_KEYCLOAK_JWKS_JSON) : undefined,
   databaseUrl: env.DATABASE_URL,
   sqlitePath: env.DATABASE_URL ? undefined : path.join(dataDir, "drive.sqlite"),

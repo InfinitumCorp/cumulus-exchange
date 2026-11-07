@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import { createServer } from "../src/server.mjs";
+import { loadConfig } from "../src/config.mjs";
 import { randomBytes } from "node:crypto";
 
-export const ISSUER = "https://id.cumulus.invalid/realms/infinitum";
-export const AUDIENCE = "cumulus-drive";
+const domain = loadConfig({});
+export const ISSUER = domain.issuer;
+export const AUDIENCE = domain.audience;
 
 export async function testKeys() {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
@@ -31,8 +33,13 @@ export async function tokenFor(privateKey, cid, purposes) {
 
 export function call(port, { method = "GET", path: pathname = "/", headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
+    let requestPath = pathname;
+    if (requestPath.startsWith("http://") || requestPath.startsWith("https://")) {
+      const target = new URL(requestPath);
+      requestPath = `${target.pathname}${target.search}`;
+    }
     const req = http.request(
-      { hostname: "127.0.0.1", port, method, path: pathname, headers },
+      { hostname: "127.0.0.1", port, method, path: requestPath, headers },
       (res) => {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
