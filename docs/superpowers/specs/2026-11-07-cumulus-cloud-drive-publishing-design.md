@@ -1,6 +1,8 @@
 # Cumulus://Cloud — authenticated Drive and explicit-consent publishing
 
-Status: design for review. This document is the only change in its pull request. No application code, migration, website edit, deployment, or merge is authorized by writing it down.
+Status: design for review. The free Drive implementation that followed is pull request #3, not this document. This file stays the earlier publishing design.
+
+Canonical public origin for the app is the exact URL `https://cumuluscloud.app`. That name is not delegated or serving from this repository. Proposed hostnames `id.cumuluscloud.app`, `cloud.cumuluscloud.app`, and `mail.cumuluscloud.app` are not trusted origins, not cookie domains, and not live DNS. Session cookies stay host-only. The demo ledger label is `demo.alex@cumuluscloud.app`. It is not an account and not a mailbox. Cumulus://ID is not a cross-product session in this repo. Local sign-in stays on `http://localhost:8080`.
 
 Product: one product, Cumulus://Cloud. Private Drive and opt-in dataset publishing are surfaces of that product. The GitHub repository name `cumulus-exchange` is the repo slug, not a second product.
 
