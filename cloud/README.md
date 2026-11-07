@@ -2,7 +2,7 @@
 
 Local storage service for Cumulus Drive. It is **not deployed** and it does **not** connect to the live Supabase project.
 
-`cumuluscloud.app` is the canonical domain (Cloudflare DNS is outside this repo). Defaults:
+`cumuluscloud.app` is the canonical domain. DNS and email records are listed in `docs/cloudflare-dns-email.md`. That file does not call Cloudflare. Defaults:
 
 | Variable | Default |
 | --- | --- |
