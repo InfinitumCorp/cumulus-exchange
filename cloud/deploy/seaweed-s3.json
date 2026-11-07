@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "cumulus-test",
+      "credentials": [
+        {
+          "accessKey": "cumulus-test",
+          "secretKey": "cumulus-test-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

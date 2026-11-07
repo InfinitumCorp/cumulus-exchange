@@ -1,0 +1,31 @@
+# Local test containers only. Not started by CI deploy, and not a production stack.
+# SeaweedFS is Apache-2.0 and is used as an external S3 API container.
+# MinIO is not included: the server is AGPL and is not vendored or linked.
+name: cumulus-drive-test
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cumulus
+      POSTGRES_PASSWORD: cumulus
+      POSTGRES_DB: cumulus
+    ports:
+      - "127.0.0.1:54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cumulus -d cumulus"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    command:
+      - server
+      - -dir=/data
+      - -filer
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - ./seaweed-s3.json:/etc/seaweedfs/s3.json:ro

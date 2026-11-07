@@ -113,7 +113,7 @@ export interface Recipe {
 
 export const SESSION_CID = "cid_alex";
 export const SESSION_NAME = "Alex Rivera";
-export const SESSION_MAIL = "alex@cumulusmail.cloud";
+export const SESSION_MAIL = "alex@cumuluscloud.app";
 export const GENESIS = "firmament_genesis";
 export const REV_SHARE = 85;
 
