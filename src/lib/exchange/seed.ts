@@ -35,8 +35,8 @@ export function seedDatasets(): Dataset[] {
       id: "ds_storage",
       ...ALEX,
       product: "cumulus",
-      title: "Cumulus storage and compute usage",
-      description: "Aggregated storage categories and compute hours. File contents stay in Drive.",
+      title: "Cumulus Drive storage and compute usage",
+      description: "Aggregated storage categories and compute hours. File contents stay in Cumulus Drive.",
       schema: "category,gbStored,computeHours",
       columns: ["category", "gbStored", "computeHours"],
       rows: [

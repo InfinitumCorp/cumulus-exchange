@@ -3,7 +3,7 @@ import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "Cumulus Exchange";
+const APP_NAME = "Cumulus://Cloud";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -14,12 +14,12 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Cumulus Data Exchange. License opted-in datasets, keep 85 percent, and settle a soulbound CDAT on a Firmament preview ledger.",
+          "Cumulus://Cloud. Cumulus Drive. License opted-in datasets, keep 85 percent, and settle a soulbound CDAT on a Firmament preview ledger.",
       },
       { name: "theme-color", content: "#111820" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
-      { name: "apple-mobile-web-app-title", content: "Cumulus" },
+      { name: "apple-mobile-web-app-title", content: "Cumulus://Cloud" },
       { name: "mobile-web-app-capable", content: "yes" },
     ],
     links: [

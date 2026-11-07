@@ -118,7 +118,7 @@ export const GENESIS = "firmament_genesis";
 export const REV_SHARE = 85;
 
 export const PRODUCT_LABEL: Record<ProductId, string> = {
-  cumulus: "Cumulus",
+  cumulus: "Cumulus://Cloud",
   scalus: "SCALVS.ai",
   spectre: "+SPCTR",
   architect: "ARCHITECT",

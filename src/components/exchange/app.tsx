@@ -38,8 +38,8 @@ export function ExchangeApp() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-kicker">Cumulus</div>
-          <div className="brand-title">Exchange</div>
+          <div className="brand-kicker">Cumulus Drive</div>
+          <div className="brand-title">Cumulus://Cloud</div>
         </div>
         <div className="identity">
           <span className="hide-sm">{session.mail}</span>
