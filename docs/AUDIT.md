@@ -27,4 +27,4 @@ The Supabase project Infinitum Corp (`ivqiskeziohbbtkcvlun`, eu-west-1, free pla
 
 ## Still not operational
 
-No host, disk volume, TLS certificate, Keycloak realm, backup target, or on-call sink exists. The free-plan pause, 1 GB cap, and 50 MB file cap are launch risks if the service is later pointed at that Supabase project. See `cloud/README.md`.
+No host, disk volume, TLS certificate, running Keycloak, backup target, or on-call sink exists. `cloud/keycloak/cumulus-realm.json` is the realm definition for `id.cumuluscloud.app` and has not been imported. The free-plan pause, 1 GB cap, and 50 MB file cap are launch risks if the service is later pointed at that Supabase project. See `cloud/README.md`.

@@ -1,0 +1,100 @@
+{
+  "realm": "cumulus",
+  "displayName": "Cumulus://ID",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "attributes": {
+    "frontendUrl": "https://id.cumuluscloud.app"
+  },
+  "roles": {
+    "realm": [
+      { "name": "drive.read", "description": "Read objects in the CID tenant" },
+      { "name": "drive.write", "description": "Upload and delete objects in the CID tenant" },
+      { "name": "drive.share", "description": "Create and revoke expiring share links" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "cumulus-cloud",
+      "name": "Cumulus://Cloud",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": ["https://cloud.cumuluscloud.app/*"],
+      "webOrigins": ["https://cloud.cumuluscloud.app"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "cid",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "cid",
+            "claim.name": "cid",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "access.tokenResponse.claim": "false",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "purposes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "purposes",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "https://id.cumuluscloud.app",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "cumulus-mail",
+      "name": "Cumulus://Mail",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["https://mail.cumuluscloud.app/*"],
+      "webOrigins": ["https://mail.cumuluscloud.app"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "users": []
+}
