@@ -370,11 +370,23 @@
     background: var(--color-wash);
   }
 
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    align-items: center;
+  .surface-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .surface {
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .surface:active {
+    background: var(--color-wash);
   }
 
   .lede input[type="range"] {
@@ -440,6 +452,10 @@
 
     .hide-sm {
       display: block;
+    }
+
+    .surface-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .split {

@@ -31,7 +31,7 @@ import {
 } from "@/lib/exchange/model";
 import { seedBooks } from "@/lib/exchange/seed";
 
-export type View = "market" | "detail" | "licenses" | "ledger" | "query" | "collect";
+export type View = "home" | "market" | "detail" | "licenses" | "ledger" | "query" | "collect";
 
 const STORAGE_KEY = "cumulus-exchange-v1";
 
@@ -118,7 +118,7 @@ function stamp(iso?: string) {
 
 export const useExchange = create<ExchangeState>((set, get) => ({
   ...books(),
-  view: "market",
+  view: "home",
   selectedId: null,
   search: "",
   product: "all",
