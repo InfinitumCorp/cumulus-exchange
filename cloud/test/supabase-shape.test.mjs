@@ -16,6 +16,7 @@ test("tenant writes are revoked and the access token hook is not installed", asy
   assert.equal(/create policy[^;]*on storage\.objects/i.test(sql), false);
   assert.equal(config.includes("custom_access_token_hook"), false);
   assert.equal(config.includes("[auth.hook.custom_access_token]"), false);
+  assert.equal(config.includes("[storage.buckets.cumulus-drive]"), false);
   assert.match(fn, /\/identities\?user_id=eq\./);
   assert.equal(fn.includes("payload.app_metadata"), false);
 });

@@ -21,14 +21,14 @@ enabled = false
 
 [storage]
 enabled = true
-file_size_limit = "50MB"
+file_size_limit = "50MiB"
 
 [storage.s3_protocol]
 enabled = true
 
-[storage.buckets.cumulus-drive]
-public = false
-file_size_limit = "50MB"
+# The private cumulus-drive bucket is created by
+# migrations/20261108120000_tenant_rls_and_bucket.sql (public = false, 50000000 bytes).
+# Do not declare it here. db reset would overwrite the file size from this file.
 
 [auth]
 enabled = true
