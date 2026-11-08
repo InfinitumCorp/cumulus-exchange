@@ -10,6 +10,9 @@ import {
   type RegionId,
 } from "@/lib/exchange/model";
 import { scoreOf, useExchange, visibleDatasets } from "@/lib/exchange/store";
+import { startConjure, followConjure } from "@/lib/exchange/conjure";
+
+const MENTION = /(^|[^\w@./])@conjure(?![\w-]|\.[a-z])/i;
 
 const PRODUCTS = Object.keys(PRODUCT_LABEL) as ProductId[];
 const MODALITIES = Object.keys(MODALITY_LABEL) as Modality[];
@@ -17,6 +20,7 @@ const REGIONS = Object.keys(REGION_LABEL) as RegionId[];
 
 export function MarketView() {
   const [coverage, setCoverage] = useState(false);
+  const [forecast, setForecast] = useState<{ text: string; busy: boolean } | null>(null);
   const search = useExchange((state) => state.search);
   const product = useExchange((state) => state.product);
   const modality = useExchange((state) => state.modality);
@@ -39,6 +43,27 @@ export function MarketView() {
     cloudMax,
   } as Parameters<typeof visibleDatasets>[0]);
   const listed = datasets.filter((dataset) => dataset.status === "listed").length;
+  // "@conjure <question>" in the search box: a live Conjure forecast over the datasets in view.
+  async function conjure() {
+    if (!MENTION.test(search) || forecast?.busy) return;
+    const context = rows.slice(0, 40).map((d) => `- ${d.title} (${PRODUCT_LABEL[d.product]}, ${MODALITY_LABEL[d.modality]}, ${d.region.toUpperCase()}, ${d.status === "listed" ? money(d.priceUsd) : "sold"})`).join("\n");
+    setForecast({ text: "Conjure™ is starting a forecast…", busy: true });
+    try {
+      let result = await startConjure({ data: { text: search, context: context ? `Datasets in view:\n${context}` : "" } });
+      if (result.error || !result.mention) return setForecast({ text: result.error || "Write a question after @conjure.", busy: false });
+      setForecast({ text: result.text ?? "", busy: true });
+      for (let i = 0; i < 300 && result.ticket && !["done", "failed", "cancelled"].includes(result.prediction?.status ?? ""); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const next = await followConjure({ data: { ticket: result.ticket } });
+        if (next.error) break;
+        result = { ...result, ...next };
+        setForecast({ text: next.text ?? "", busy: true });
+      }
+      setForecast((f) => (f ? { ...f, busy: false } : f));
+    } catch (error) {
+      setForecast({ text: error instanceof Error ? error.message : "Conjure is unavailable right now.", busy: false });
+    }
+  }
   const volume = datasets
     .filter((dataset) => dataset.status === "listed")
     .reduce((sum, dataset) => sum + dataset.priceUsd, 0);
@@ -81,8 +106,11 @@ export function MarketView() {
           className="search"
           value={search}
           placeholder="Search by meaning — ships, forecast, mosaic, agent"
-          aria-label="Search the catalog by meaning"
+          aria-label="Search the catalog by meaning, or ask @conjure"
           onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void conjure();
+          }}
         />
         <select
           className="field"
@@ -135,6 +163,11 @@ export function MarketView() {
           onChange={(event) => setCloudMax(Number(event.target.value))}
         />
       </label>
+      {forecast ? (
+        <div className="notice" role="status" aria-live="polite" style={{ whiteSpace: "pre-wrap" }}>
+          {forecast.text}
+        </div>
+      ) : null}
       {coverage ? <CoverageMap datasets={rows} onOpen={open} /> : null}
       <div className="list">
         {rows.length === 0 ? (
