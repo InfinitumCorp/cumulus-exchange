@@ -1,3 +1,4 @@
+import { FirmSuite } from "@/lib/firm/FirmSuite";
 import { useEffect } from "react";
 import { CollectView } from "@/components/exchange/collect";
 import { DetailView } from "@/components/exchange/detail";
@@ -70,6 +71,7 @@ export function ExchangeApp() {
           {view === "ledger" && <LedgerView />}
           {view === "query" && <QueryView />}
           {view === "collect" && <CollectView />}
+          {view === "home" && <FirmSuite product="cumulus-exchange" />}
         </main>
       </div>
       <nav className="tabbar" aria-label="Cumulus://Cloud">
