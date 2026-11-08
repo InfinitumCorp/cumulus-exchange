@@ -43,6 +43,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+      - name: Install Drive dependencies
+        working-directory: cloud
+        run: npm ci
       - name: Start Keycloak, Postgres, and Drive
         run: docker compose -f cloud/deploy/docker-compose.stack.yml up -d --build
       - name: Wait until Keycloak and Drive answer
@@ -86,3 +91,14 @@ jobs:
       - name: End-to-end login, storage, and tenant isolation
         working-directory: cloud
         run: sh scripts/supabase-e2e.sh
+  worker:
+    name: cloudflare worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Worker unit tests
+        working-directory: cloud
+        run: node --test worker/test/*.test.mjs

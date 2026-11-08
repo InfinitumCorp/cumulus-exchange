@@ -39,7 +39,11 @@ export function cidFromSupabasePayload(payload) {
   };
 }
 
-/** Supabase Auth access tokens. cid is app_metadata.cid, set by the SQL hook. */
+/**
+ * Node-process Supabase verifier. It still reads app_metadata.cid.
+ * The free launch path does not use this verifier. The Edge Function resolves
+ * cid from cumulus.identities, and the project-wide access token hook is off.
+ */
 export function createSupabaseVerifier({ issuer, jwksUrl }) {
   const keys = createRemoteJWKSet(new URL(jwksUrl));
   return async function verifyJwt(token) {

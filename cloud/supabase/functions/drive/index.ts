@@ -3,11 +3,14 @@ import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
 /**
  * Cumulus Drive on Supabase Edge Functions.
  * Metadata goes through PostgREST so row level security applies.
+ * cid is loaded from cumulus.identities by the verified JWT sub.
+ * The project-wide access token hook is not enabled. A cid on the token is ignored.
  * Blob keys match the Node S3 driver: tenants/<tenantId>/<blobId>
  * in the private bucket cumulus-drive. This file is not deployed by CI.
  */
 
 const CID = /^cid_[a-z0-9_]{1,64}$/;
+const SUB = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const FILE_CAP = 50_000_000;
 const STORAGE_BUCKET = "cumulus-drive";
@@ -127,10 +130,12 @@ async function verify(req: Request): Promise<Principal> {
   } catch {
     throw new ApiError(401, "InvalidToken", "Supabase token was rejected");
   }
-  const metadata = payload.app_metadata as { cid?: unknown } | undefined;
-  const cid = metadata?.cid;
-  if (typeof cid !== "string" || !CID.test(cid)) throw new ApiError(401, "InvalidToken", "CID claim is required");
-  return { token, cid, sub: typeof payload.sub === "string" ? payload.sub : "", purpose: req.headers.get("x-cumulus-purpose") ?? "", hint: req.headers.get("x-cumulus-tenant") };
+  const sub = typeof payload.sub === "string" ? payload.sub : "";
+  if (!SUB.test(sub)) throw new ApiError(401, "InvalidToken", "Subject is required");
+  const rows = await rest(token, anonKey, `/identities?user_id=eq.${encodeURIComponent(sub)}&select=cid`);
+  const cid = rows?.[0]?.cid;
+  if (typeof cid !== "string" || !CID.test(cid)) throw new ApiError(401, "InvalidToken", "CID is not bound to this user");
+  return { token, cid, sub, purpose: req.headers.get("x-cumulus-purpose") ?? "", hint: req.headers.get("x-cumulus-tenant") };
 }
 
 async function tenant(principal: Principal) {

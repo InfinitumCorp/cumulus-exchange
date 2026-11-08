@@ -16,7 +16,8 @@ done
 if [ "$reset_ok" != "1" ]; then
   code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:54321/auth/v1/health || true)
   hook=$(docker exec supabase_db_cumulus-drive psql -U postgres -tAc "select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'custom_access_token_hook'" || true)
-  if [ "$code" != "200" ] || [ "$hook" != "1" ]; then
+  bucket=$(docker exec supabase_db_cumulus-drive psql -U postgres -tAc "select case when public = false and file_size_limit = 50000000 then 'ok' else 'bad' end from storage.buckets where id = 'cumulus-drive'" || true)
+  if [ "$code" != "200" ] || [ "$hook" = "1" ] || [ "$bucket" != "ok" ]; then
     echo "Local database reset failed"
     exit 1
   fi

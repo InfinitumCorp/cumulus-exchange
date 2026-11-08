@@ -112,7 +112,7 @@ Dashboard steps, later, when an origin exists. Until then, leave both names unpu
 4. SSL/TLS → Overview → Full. Edge Certificates → Minimum TLS Version → TLS 1.2. Turn on Always Use HTTPS.
 5. Do not point either CNAME at `ivqiskeziohbbtkcvlun.supabase.co` unless that exact hostname has a verified Supabase custom domain. Without the paid add-on, that CNAME fails TLS. It is not the launch setup.
 
-Supabase mode checks the project JWKS and takes `cid` from `app_metadata.cid`. Keycloak mode remains available and still uses `https://id.cumuluscloud.app` when that host is the issuer.
+The Drive Edge Function checks the project JWKS and loads `cid` from `cumulus.identities` by the token `sub`. It does not use a project-wide access token hook. Keycloak mode remains available and still uses `https://id.cumuluscloud.app` when that host is the issuer. The Worker and DNS checklist is `cloud/DEPLOY.md`.
 
 ## What launch does not need
 

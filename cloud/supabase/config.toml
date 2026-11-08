@@ -21,14 +21,14 @@ enabled = false
 
 [storage]
 enabled = true
-file_size_limit = "50MiB"
+file_size_limit = "50MB"
 
 [storage.s3_protocol]
 enabled = true
 
 [storage.buckets.cumulus-drive]
 public = false
-file_size_limit = "50MiB"
+file_size_limit = "50MB"
 
 [auth]
 enabled = true
@@ -42,9 +42,8 @@ enable_anonymous_sign_ins = false
 enable_signup = true
 enable_confirmations = false
 
-[auth.hook.custom_access_token]
-enabled = true
-uri = "pg-functions://postgres/public/custom_access_token_hook"
+# No custom access token hook. A project-wide hook runs on every login.
+# cid is resolved from cumulus.identities by the verified JWT sub.
 
 [functions.drive]
 verify_jwt = false
