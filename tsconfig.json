@@ -32,5 +32,6 @@
   "include": [
     "src",
     "server"
-  ]
+  ],
+  "exclude": ["src/i18n/*.js"]
 }

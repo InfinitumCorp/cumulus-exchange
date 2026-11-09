@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { Language } from "@/components/language";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Cumulus://Cloud";
@@ -36,6 +37,7 @@ export const Route = createRootRoute({
       </head>
       <body>
         <PreviewHostBridge />
+        <Language />
         <AuthProvider>
           <Outlet />
         </AuthProvider>
