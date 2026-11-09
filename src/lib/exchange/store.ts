@@ -39,6 +39,7 @@ import {
   type SampleRow,
 } from "@/lib/exchange/model";
 import { seedBooks } from "@/lib/exchange/seed";
+import { readGeoRouting, writeGeoRouting } from "@/lib/geo/preference";
 
 export type View = "home" | "drive" | "market" | "detail" | "licenses" | "ledger" | "query" | "collect";
 
@@ -75,6 +76,9 @@ export interface ExchangeState extends Persisted {
   queryRows: SampleRow[];
   receipt: string;
   rollField: string;
+  geoRouting: boolean;
+  setGeoRouting: (geoRouting: boolean) => void;
+  hydrateGeo: () => void;
   setView: (view: View) => void;
   open: (id: string) => void;
   setSearch: (search: string) => void;
@@ -183,6 +187,15 @@ export const useExchange = create<ExchangeState>((set, get) => ({
   queryRows: [],
   receipt: "",
   rollField: "",
+  geoRouting: false,
+  setGeoRouting: (geoRouting) => {
+    writeGeoRouting(typeof window === "undefined" ? null : window.localStorage, geoRouting);
+    set({ geoRouting });
+  },
+  hydrateGeo: () => {
+    if (typeof window === "undefined") return;
+    set({ geoRouting: readGeoRouting(window.localStorage) });
+  },
   setView: (view) => set({ view }),
   open: (id) => set({ view: "detail", selectedId: id, notice: "" }),
   setSearch: (search) => set({ search }),

@@ -37,11 +37,13 @@ export function ExchangeApp() {
   const setActor = useExchange((state) => state.setActor);
   const setView = useExchange((state) => state.setView);
   const hydrate = useExchange((state) => state.hydrate);
+  const hydrateGeo = useExchange((state) => state.hydrateGeo);
   const actor = PREVIEW_TENANTS.find((tenant) => tenant.cid === actorCid);
 
   useEffect(() => {
     hydrate();
-  }, [hydrate]);
+    hydrateGeo();
+  }, [hydrate, hydrateGeo]);
 
   return (
     <div className="shell">

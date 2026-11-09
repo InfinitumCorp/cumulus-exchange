@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { Switch } from "@blueprintjs/core";
 import { PRODUCT_LABEL } from "@/lib/exchange/model";
 import { useExchange } from "@/lib/exchange/store";
 
@@ -31,7 +33,32 @@ const SURFACES = [
 export function HomeView() {
   const setView = useExchange((state) => state.setView);
   const datasets = useExchange((state) => state.datasets);
+  const geoRouting = useExchange((state) => state.geoRouting);
+  const setGeoRouting = useExchange((state) => state.setGeoRouting);
+  const [geoNote, setGeoNote] = useState("");
   const listed = datasets.filter((dataset) => dataset.status === "listed").length;
+
+  useEffect(() => {
+    if (!geoRouting) {
+      setGeoNote("");
+      return;
+    }
+    let live = true;
+    void fetch("/api/geo")
+      .then((response) => response.json())
+      .then((body: { enabled?: boolean; loaded?: boolean }) => {
+        if (!live) return;
+        setGeoNote(
+          body.enabled && body.loaded ? "Geo routing on. Lists are loaded." : "Geo routing on.",
+        );
+      })
+      .catch(() => {
+        if (live) setGeoNote("Geo routing on.");
+      });
+    return () => {
+      live = false;
+    };
+  }, [geoRouting]);
 
   return (
     <section className="pane">
@@ -39,9 +66,9 @@ export function HomeView() {
         <div>
           <h1 className="pane-title">Cumulus://Cloud</h1>
           <p className="lede">
-            Infinitum Corporation®. One product. Cumulus://Cloud is Cumulus Drive. Storage,
-            compute, databases and AI infrastructure for civilian and business cyber workloads,
-            with an opt-in license surface for data you choose to offer.
+            Infinitum Corporation®. One product. Cumulus://Cloud is Cumulus Drive. Storage, compute,
+            databases and AI infrastructure for civilian and business cyber workloads, with an
+            opt-in license surface for data you choose to offer.
           </p>
         </div>
       </div>
@@ -69,7 +96,11 @@ export function HomeView() {
             key={surface.id}
             className="card surface"
             type="button"
-            onClick={() => setView(surface.id === "store" ? "drive" : surface.id === "earn" ? "market" : "market")}
+            onClick={() =>
+              setView(
+                surface.id === "store" ? "drive" : surface.id === "earn" ? "market" : "market",
+              )
+            }
           >
             <span className="mono">{surface.kicker}</span>
             <h3>{surface.title}</h3>
@@ -84,6 +115,12 @@ export function HomeView() {
         <button className="btn" type="button" onClick={() => setView("collect")}>
           Package a set
         </button>
+        <Switch
+          checked={geoRouting}
+          label="Geo routing"
+          onChange={(event) => setGeoRouting(event.currentTarget.checked)}
+        />
+        {geoRouting && geoNote ? <span className="mono">{geoNote}</span> : null}
       </div>
     </section>
   );

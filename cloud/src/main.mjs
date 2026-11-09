@@ -4,6 +4,8 @@ import { createServer, masterKeyFromEnv } from "./server.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
 import { LIMITS } from "./limits.mjs";
 import { loadConfig } from "./config.mjs";
+import { log } from "./log.mjs";
+import { prepareGeo } from "./geo.mjs";
 
 /**
  * Local process entry. Refuses the live Supabase project unless an explicit
@@ -30,6 +32,20 @@ if (authMode === "supabase") {
 }
 const supabaseUrl = env.CUMULUS_SUPABASE_URL?.replace(/\/+$/, "");
 const dataDir = path.resolve(env.CUMULUS_DATA_DIR || "cloud/var");
+let prepared = null;
+try {
+  prepared = await prepareGeo({
+    env,
+    argv: process.argv.slice(2),
+    dataDir,
+    geoDir: env.INFINITUM_GEO_DIR || path.resolve(import.meta.dirname, "../../data/geo"),
+  });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "geo setting refused");
+  process.exit(1);
+}
+if (prepared?.warning) log("warn", "geo datasets unavailable", { err: prepared.warning });
+const geo = prepared?.index ? { enabled: true, index: prepared.index } : null;
 const app = await createServer({
   config,
   masterKey: masterKeyFromEnv(env),
@@ -58,11 +74,16 @@ const app = await createServer({
     loopbackOnly: false,
   },
   limits: LIMITS,
+  geo,
 });
 
 const port = Number(env.CUMULUS_PORT || 8092);
 const bind = env.CUMULUS_BIND || "127.0.0.1";
 const server = http.createServer(app.handle);
 server.listen(port, bind, () => {
-  console.log(JSON.stringify({ msg: "cumulus-drive listening", bind, port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false }));
+  if (geo) {
+    console.log(JSON.stringify({ msg: "cumulus-drive listening", bind, port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false, geo: true }));
+  } else {
+    console.log(JSON.stringify({ msg: "cumulus-drive listening", bind, port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false }));
+  }
 });

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiGeoRouteImport } from './routes/api/geo'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiDriveObjectsRouteImport } from './routes/api/drive/objects'
 import { Route as ApiDriveSharedRouteImport } from './routes/api/drive/shared'
@@ -20,6 +21,11 @@ import { Route as ApiDriveObjectsIdSharesRouteImport } from './routes/api/drive/
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGeoRoute = ApiGeoRouteImport.update({
+  id: '/api/geo',
+  path: '/api/geo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
@@ -55,6 +61,7 @@ const ApiDriveObjectsIdSharesRoute = ApiDriveObjectsIdSharesRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/geo': typeof ApiGeoRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
   '/api/drive/shared': typeof ApiDriveSharedRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/geo': typeof ApiGeoRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
   '/api/drive/shared': typeof ApiDriveSharedRoute
@@ -74,6 +82,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/geo': typeof ApiGeoRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
   '/api/drive/shared': typeof ApiDriveSharedRoute
@@ -85,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/api/geo'
     | '/api/auth/$'
     | '/api/drive/objects'
     | '/api/drive/shared'
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/api/geo'
     | '/api/auth/$'
     | '/api/drive/objects'
     | '/api/drive/shared'
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/api/geo'
     | '/api/auth/$'
     | '/api/drive/objects'
     | '/api/drive/shared'
@@ -113,6 +125,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiGeoRoute: typeof ApiGeoRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiDriveObjectsRoute: typeof ApiDriveObjectsRouteWithChildren
   ApiDriveSharedRoute: typeof ApiDriveSharedRoute
@@ -126,6 +139,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/geo': {
+      id: '/api/geo'
+      path: '/api/geo'
+      fullPath: '/api/geo'
+      preLoaderRoute: typeof ApiGeoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
@@ -198,6 +218,7 @@ const ApiDriveObjectsRouteWithChildren = ApiDriveObjectsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiGeoRoute: ApiGeoRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiDriveObjectsRoute: ApiDriveObjectsRouteWithChildren,
   ApiDriveSharedRoute: ApiDriveSharedRoute,

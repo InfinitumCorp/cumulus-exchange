@@ -4,6 +4,8 @@
  * hosts. It does not call Cloudflare or change DNS.
  */
 
+import { isGeoEnabled } from "../../src/lib/geo/hook.mjs";
+
 export const DEFAULT_ROOT_DOMAIN = "cumuluscloud.app";
 
 const HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
@@ -62,6 +64,7 @@ export function loadConfig(env = process.env) {
     publicBaseUrl,
     corsOrigins,
     mailAddressDomain: rootDomain,
+    geoEnabled: isGeoEnabled(env),
   };
 }
 

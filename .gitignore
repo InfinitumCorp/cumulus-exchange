@@ -12,3 +12,6 @@ dist
 !.env.example
 cloud/supabase/.temp
 cloud/supabase/.branches
+data/geo/*.dat
+data/geo/*.sha256sum
+data/geo/*.tmp
