@@ -10,3 +10,5 @@ dist
 .env
 .env.*
 !.env.example
+cloud/supabase/.temp
+cloud/supabase/.branches

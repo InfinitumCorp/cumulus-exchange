@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import { HTMLTable } from "@blueprintjs/core";
+import {
+  DRIVE_API,
+  DRIVE_BUCKET,
+  driveHeaders,
+  driveObjectUrl,
+  previewShareHref,
+} from "@/lib/exchange/drive-client";
 
 type ObjectRow = { object_key: string; size_bytes: number; content_type: string };
 type Usage = { usedBytes: number; maxBytes: number; maxFileBytes: number };
-
-const BUCKET = "drive";
 
 export function DriveView() {
   const [token, setToken] = useState<string | null>(null);
@@ -13,10 +19,10 @@ export function DriveView() {
   const [shareUrl, setShareUrl] = useState("");
 
   const load = useCallback(async (access: string) => {
-    const headers = { authorization: `Bearer ${access}`, "x-cumulus-purpose": "drive.read" };
+    const headers = driveHeaders(access, "drive.read");
     const [list, meter] = await Promise.all([
-      fetch(`/api/drive/v1/objects/${BUCKET}`, { headers }),
-      fetch("/api/drive/v1/usage", { headers }),
+      fetch(driveObjectUrl(DRIVE_BUCKET), { headers }),
+      fetch(`${DRIVE_API}/v1/usage`, { headers }),
     ]);
     if (!list.ok || !meter.ok) {
       setNotice("Drive could not list this folder.");
@@ -31,7 +37,7 @@ export function DriveView() {
 
   useEffect(() => {
     let gone = false;
-    fetch("/api/drive/dev-session")
+    fetch(`${DRIVE_API}/dev-session`)
       .then(async (response) => {
         if (!response.ok) throw new Error("no session");
         const body = (await response.json()) as { token: string };
@@ -40,7 +46,9 @@ export function DriveView() {
         await load(body.token);
       })
       .catch(() => {
-        if (!gone) setNotice("Drive is available in the local preview. It is not turned on for this server.");
+        if (!gone) {
+          setNotice("Drive is available in the local preview. It is not turned on for this server.");
+        }
       });
     return () => {
       gone = true;
@@ -50,11 +58,10 @@ export function DriveView() {
   async function upload(file: File | undefined) {
     if (!file || !token) return;
     setNotice(`Uploading ${file.name}.`);
-    const response = await fetch(`/api/drive/v1/objects/${BUCKET}/${encodeURIComponent(file.name)}`, {
+    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, file.name), {
       method: "PUT",
       headers: {
-        authorization: `Bearer ${token}`,
-        "x-cumulus-purpose": "drive.write",
+        ...driveHeaders(token, "drive.write"),
         "content-type": file.type || "application/octet-stream",
       },
       body: await file.arrayBuffer(),
@@ -65,8 +72,8 @@ export function DriveView() {
 
   async function download(key: string) {
     if (!token) return;
-    const response = await fetch(`/api/drive/v1/objects/${BUCKET}/${encodeURIComponent(key)}`, {
-      headers: { authorization: `Bearer ${token}`, "x-cumulus-purpose": "drive.read" },
+    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, key), {
+      headers: driveHeaders(token, "drive.read"),
     });
     if (!response.ok) {
       setNotice("Download failed.");
@@ -83,14 +90,13 @@ export function DriveView() {
 
   async function share(key: string) {
     if (!token) return;
-    const response = await fetch("/api/drive/v1/shares", {
+    const response = await fetch(`${DRIVE_API}/v1/shares`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${token}`,
-        "x-cumulus-purpose": "drive.share",
+        ...driveHeaders(token, "drive.share"),
         "content-type": "application/json",
       },
-      body: JSON.stringify({ bucket: BUCKET, key, ttlSeconds: 900 }),
+      body: JSON.stringify({ bucket: DRIVE_BUCKET, key, ttlSeconds: 900 }),
     });
     if (!response.ok) {
       setNotice("Could not create a share link.");
@@ -103,13 +109,15 @@ export function DriveView() {
 
   async function remove(key: string) {
     if (!token) return;
-    const response = await fetch(`/api/drive/v1/objects/${BUCKET}/${encodeURIComponent(key)}`, {
+    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, key), {
       method: "DELETE",
-      headers: { authorization: `Bearer ${token}`, "x-cumulus-purpose": "drive.write" },
+      headers: driveHeaders(token, "drive.write"),
     });
     setNotice(response.ok ? `${key} was deleted.` : "Delete failed.");
     if (response.ok) await load(token);
   }
+
+  const localShare = shareUrl ? previewShareHref(shareUrl) : "";
 
   return (
     <section className="pane">
@@ -119,7 +127,7 @@ export function DriveView() {
           <p className="lede">
             Files stay in Cumulus Drive for {usage ? formatBytes(usage.usedBytes) : "…"} of{" "}
             {usage ? formatBytes(usage.maxBytes) : "the"} quota. Per file cap{" "}
-            {usage ? formatBytes(usage.maxFileBytes) : "50 MB"}.
+            {usage ? formatBytes(usage.maxFileBytes) : "50 MB"}. Upload calls {DRIVE_API}.
           </p>
         </div>
       </div>
@@ -138,29 +146,42 @@ export function DriveView() {
       </div>
       {notice ? <p className="lede">{notice}</p> : null}
       {shareUrl ? (
-        <p className="lede">
-          <a href={shareUrl}>{shareUrl}</a>
+        <p className="mono">
+          <a href={localShare}>{localShare}</a>
         </p>
       ) : null}
-      <div className="surface-grid">
-        {objects.map((object) => (
-          <article className="card" key={object.object_key}>
-            <h3>{object.object_key}</h3>
-            <p className="lede">{formatBytes(object.size_bytes)}</p>
-            <div className="actions">
-              <button className="btn" type="button" onClick={() => void download(object.object_key)}>
-                Download
-              </button>
-              <button className="btn" type="button" onClick={() => void share(object.object_key)}>
-                Share
-              </button>
-              <button className="btn" type="button" onClick={() => void remove(object.object_key)}>
-                Delete
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
+      <HTMLTable compact striped className="drive-table">
+        <thead>
+          <tr>
+            <th>Object</th>
+            <th>Size</th>
+            <th>Type</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {objects.map((object) => (
+            <tr key={object.object_key}>
+              <td>{object.object_key}</td>
+              <td>{formatBytes(object.size_bytes)}</td>
+              <td>{object.content_type}</td>
+              <td>
+                <div className="actions">
+                  <button className="btn" type="button" onClick={() => void download(object.object_key)}>
+                    Download
+                  </button>
+                  <button className="btn" type="button" onClick={() => void share(object.object_key)}>
+                    Share
+                  </button>
+                  <button className="btn" type="button" onClick={() => void remove(object.object_key)}>
+                    Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </HTMLTable>
     </section>
   );
 }

@@ -11,8 +11,19 @@
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
   "attributes": {
-    "frontendUrl": "https://id.cumuluscloud.app"
+    "unmanagedAttributePolicy": "ADMIN_EDIT"
   },
+  "requiredActions": [
+    {
+      "alias": "VERIFY_PROFILE",
+      "name": "Verify Profile",
+      "providerId": "VERIFY_PROFILE",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 10,
+      "config": {}
+    }
+  ],
   "roles": {
     "realm": [
       { "name": "drive.read", "description": "Read objects in the CID tenant" },
@@ -32,7 +43,7 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
-      "redirectUris": ["https://cloud.cumuluscloud.app/*"],
+      "redirectUris": ["https://cloud.cumuluscloud.app/*", "http://127.0.0.1:18080/*"],
       "webOrigins": ["https://cloud.cumuluscloud.app"],
       "attributes": {
         "pkce.code.challenge.method": "S256"

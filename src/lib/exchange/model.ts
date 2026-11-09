@@ -48,6 +48,12 @@ export interface Dataset {
   cloudCover?: number;
 }
 
+export interface ScopeDecision {
+  scope: string;
+  granted: boolean;
+  updatedAt: string;
+}
+
 export interface ConsentRecord {
   id: string;
   cid: string;
@@ -55,6 +61,7 @@ export interface ConsentRecord {
   datasetId: string;
   granted: boolean;
   scopes: string[];
+  decisions: ScopeDecision[];
   purpose: string;
   timestamp: string;
   firmamentTx?: string;
@@ -65,6 +72,9 @@ export interface LicenseSale {
   datasetId: string;
   buyerId: string;
   buyerName: string;
+  amountCents: number;
+  ownerCents: number;
+  platformCents: number;
   amountUsd: number;
   userShareUsd: number;
   platformShareUsd: number;
@@ -85,15 +95,62 @@ export interface CdatToken {
   issuedAt: string;
   expiresAt: string;
   burned: boolean;
+  /** Soulbound: the license is bound to the licensee CID. */
+  soulbound: true;
+  /** Always false. A CDAT cannot be transferred. */
+  transferable: false;
   firmamentTx?: string;
 }
 
 export interface Payout {
   saleId: string;
   cid: string;
+  amountCents: number;
   amountUsd: number;
   paid: boolean;
   paidAt?: string;
+}
+
+export type LicensePhase = "offered" | "accepted" | "revoked";
+
+export interface LicenseRecord {
+  id: string;
+  datasetId: string;
+  ownerCid: string;
+  licenseeCid: string;
+  licenseeName: string;
+  amountCents: number;
+  ownerCents: number;
+  platformCents: number;
+  scopes: string[];
+  phase: LicensePhase;
+  offeredAt: string;
+  acceptedAt?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+  cdatTokenId?: string;
+  saleId?: string;
+  soulbound: true;
+}
+
+export type AuditAction =
+  | "scope_grant"
+  | "scope_revoke"
+  | "offer"
+  | "accept"
+  | "license_revoke"
+  | "transfer_rejected"
+  | "settle";
+
+export interface AuditEvent {
+  id: string;
+  at: string;
+  actorCid: string;
+  tenantCid: string;
+  action: AuditAction;
+  subjectId: string;
+  scope?: string;
+  detail: string;
 }
 
 export interface LedgerEntry {
@@ -116,6 +173,25 @@ export const SESSION_NAME = "Alex Rivera";
 export const SESSION_MAIL = "alex@cumuluscloud.app";
 export const GENESIS = "firmament_genesis";
 export const REV_SHARE = 85;
+/** Local hash chain only. Production Firmament is not called. */
+export const FIRMAMENT_CHANNEL = "preview" as const;
+
+export const PREVIEW_TENANTS = [
+  { cid: "cid_alex", name: "Alex Rivera", mail: "alex@cumuluscloud.app" },
+  { cid: "cid_harbor", name: "Harbor Desk", mail: "harbor@example.test" },
+  { cid: "cid_kepler", name: "Kepler Catalog", mail: "kepler@example.test" },
+  { cid: "cid_north", name: "Northline", mail: "northline@example.test" },
+] as const;
+
+export function tenantName(cid: string): string {
+  return PREVIEW_TENANTS.find((tenant) => tenant.cid === cid)?.name ?? cid;
+}
+
+export function assertPreviewTenant(cid: string): void {
+  if (!PREVIEW_TENANTS.some((tenant) => tenant.cid === cid)) {
+    throw new Error(`Unknown preview tenant ${cid}`);
+  }
+}
 
 export const PRODUCT_LABEL: Record<ProductId, string> = {
   cumulus: "Cumulus://Cloud",
@@ -205,20 +281,72 @@ export function money(value: number): string {
   return value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+/** Truncating division for non-negative safe integers. */
+export function divTrunc(numerator: number, denominator: number): number {
+  if (!Number.isSafeInteger(numerator) || numerator < 0) {
+    throw new Error("numerator must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(denominator) || denominator <= 0) {
+    throw new Error("denominator must be a positive safe integer");
+  }
+  return (numerator - (numerator % denominator)) / denominator;
+}
+
+/**
+ * 85/15 split in integer cents. The owner receives trunc(amount * percent / 100).
+ * The platform receives the remainder, so the two shares sum to the amount.
+ * Decimal dollars are converted only at the boundary in `dollarsToCents`.
+ */
+export function splitRevenueCents(amountCents: number, ownerPercent = REV_SHARE) {
+  if (!Number.isSafeInteger(amountCents) || amountCents < 0) {
+    throw new Error("amountCents must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(ownerPercent) || ownerPercent < 0 || ownerPercent > 100) {
+    throw new Error("owner share must be an integer percent from 0 to 100");
+  }
+  const product = amountCents * ownerPercent;
+  if (!Number.isSafeInteger(product)) throw new Error("amount exceeds integer range");
+  const ownerCents = divTrunc(product, 100);
+  const platformCents = amountCents - ownerCents;
+  return { amountCents, ownerCents, platformCents };
+}
+
+/** Boundary conversion. The revenue split itself never uses this. */
+export function dollarsToCents(amountUsd: number): number {
+  if (!Number.isFinite(amountUsd) || amountUsd < 0) {
+    throw new Error("amount must be a non-negative number of dollars");
+  }
+  const text = amountUsd.toFixed(2);
+  const [whole, frac] = text.split(".");
+  if (whole === undefined || frac === undefined) throw new Error("amount could not be converted");
+  return Number(whole) * 100 + Number(frac);
+}
+
+export function moneyCents(cents: number): string {
+  if (!Number.isSafeInteger(cents)) return money(cents / 100);
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const dollars = divTrunc(abs, 100);
+  const rem = abs % 100;
+  return `${sign}$${dollars.toLocaleString("en-US")}.${String(rem).padStart(2, "0")}`;
+}
+
 export function splitAmount(amountUsd: number, revSharePct: number) {
-  const amountCents = Math.round(amountUsd * 100);
-  const userCents = Math.round((amountCents * revSharePct) / 100);
+  const parts = splitRevenueCents(dollarsToCents(amountUsd), revSharePct);
   return {
-    amountUsd: amountCents / 100,
-    userShareUsd: userCents / 100,
-    platformShareUsd: (amountCents - userCents) / 100,
+    ...parts,
+    amountUsd: parts.amountCents / 100,
+    userShareUsd: parts.ownerCents / 100,
+    platformShareUsd: parts.platformCents / 100,
   };
 }
 
 export function splitHolds(sale: LicenseSale, revSharePct: number): boolean {
-  const again = splitAmount(sale.amountUsd, revSharePct);
+  const again = splitRevenueCents(sale.amountCents, revSharePct);
   return (
-    again.userShareUsd === sale.userShareUsd && again.platformShareUsd === sale.platformShareUsd
+    again.ownerCents === sale.ownerCents &&
+    again.platformCents === sale.platformCents &&
+    sale.ownerCents + sale.platformCents === sale.amountCents
   );
 }
 
@@ -247,6 +375,16 @@ export function appendEntry(
   const index = ledger.length + 1;
   const hash = previewHash(prev, `${index}|${type}|${at}|${summary}`);
   return [...ledger, { index, hash, prev, type, at, summary }];
+}
+
+/** Firmament integration point: a local preview chain, labeled `preview`. */
+export function firmamentPreviewAppend(
+  ledger: LedgerEntry[],
+  type: LedgerEntry["type"],
+  at: string,
+  summary: string,
+): LedgerEntry[] {
+  return appendEntry(ledger, type, at, summary);
 }
 
 export function termExpiry(terms: string, fromIso: string): string {
@@ -380,8 +518,13 @@ export function enclaveReceipt(datasetId: string, expression: string, count: num
 }
 
 export function canRead(dataset: Dataset, tokens: CdatToken[], cid: string): boolean {
-  if (dataset.ownerCid === cid && dataset.status !== "revoked") return true;
+  if (dataset.ownerCid === cid) return true;
   return tokens.some(
-    (token) => token.datasetId === dataset.id && token.licensee === cid && isActiveToken(token),
+    (token) =>
+      token.datasetId === dataset.id &&
+      token.licensee === cid &&
+      token.soulbound === true &&
+      token.transferable === false &&
+      isActiveToken(token),
   );
 }

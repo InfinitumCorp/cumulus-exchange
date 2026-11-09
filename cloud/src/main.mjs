@@ -20,16 +20,31 @@ if (env.CUMULUS_S3_ENDPOINT) assertNotLiveSupabase(env.CUMULUS_S3_ENDPOINT);
 if (env.DATABASE_URL) assertNotLiveSupabase(env.DATABASE_URL);
 
 const config = loadConfig(env);
+const authMode = env.CUMULUS_AUTH_MODE || "keycloak";
+if (authMode === "supabase") {
+  if (!env.CUMULUS_SUPABASE_URL) {
+    console.error("CUMULUS_SUPABASE_URL is required when CUMULUS_AUTH_MODE=supabase.");
+    process.exit(1);
+  }
+  assertNotLiveSupabase(env.CUMULUS_SUPABASE_URL);
+}
+const supabaseUrl = env.CUMULUS_SUPABASE_URL?.replace(/\/+$/, "");
 const dataDir = path.resolve(env.CUMULUS_DATA_DIR || "cloud/var");
 const app = await createServer({
   config,
   masterKey: masterKeyFromEnv(env),
   bootstrapToken: env.CUMULUS_BOOTSTRAP_TOKEN,
   shareSecret: env.CUMULUS_SHARE_SECRET,
-  issuer: config.issuer,
+  authMode,
+  issuer: authMode === "supabase" ? `${supabaseUrl}/auth/v1` : config.issuer,
   audience: config.audience,
-  jwksUrl: env.CUMULUS_KEYCLOAK_JWKS_JSON ? undefined : config.jwksUrl,
-  jwks: env.CUMULUS_KEYCLOAK_JWKS_JSON ? JSON.parse(env.CUMULUS_KEYCLOAK_JWKS_JSON) : undefined,
+  jwksUrl:
+    authMode === "supabase"
+      ? `${supabaseUrl}/auth/v1/.well-known/jwks.json`
+      : env.CUMULUS_KEYCLOAK_JWKS_JSON
+        ? undefined
+        : config.jwksUrl,
+  jwks: authMode === "supabase" || !env.CUMULUS_KEYCLOAK_JWKS_JSON ? undefined : JSON.parse(env.CUMULUS_KEYCLOAK_JWKS_JSON),
   databaseUrl: env.DATABASE_URL,
   sqlitePath: env.DATABASE_URL ? undefined : path.join(dataDir, "drive.sqlite"),
   blobsDir: path.join(dataDir, "blobs"),
@@ -46,7 +61,8 @@ const app = await createServer({
 });
 
 const port = Number(env.CUMULUS_PORT || 8092);
+const bind = env.CUMULUS_BIND || "127.0.0.1";
 const server = http.createServer(app.handle);
-server.listen(port, "127.0.0.1", () => {
-  console.log(JSON.stringify({ msg: "cumulus-drive listening", port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false }));
+server.listen(port, bind, () => {
+  console.log(JSON.stringify({ msg: "cumulus-drive listening", bind, port, driver: env.CUMULUS_STORAGE_DRIVER || "filesystem", liveSupabase: false }));
 });

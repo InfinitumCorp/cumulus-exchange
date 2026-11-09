@@ -1,16 +1,5 @@
-import {
-  appendEntry,
-  type CdatToken,
-  type ConsentRecord,
-  type Dataset,
-  type LedgerEntry,
-  type LicenseSale,
-  type Payout,
-  REV_SHARE,
-  SESSION_CID,
-  splitAmount,
-  termExpiry,
-} from "@/lib/exchange/model";
+import { acceptLicense, emptyBooks, offerLicense, recordExistingListing } from "./lifecycle.ts";
+import { REV_SHARE, SESSION_CID, type Dataset } from "./model.ts";
 
 const ALEX = { ownerCid: SESSION_CID, ownerName: "Alex Rivera" };
 const HARBOR = { ownerCid: "cid_harbor", ownerName: "Harbor Desk" };
@@ -93,7 +82,6 @@ export function seedDatasets(): Dataset[] {
       licenseTerms: "CDAT-commercial-1y",
       priceUsd: 400,
       createdAt: "2026-09-02T09:00:00.000Z",
-      status: "sold",
       scopes: ["anonymized_insights"],
       region: "lhr",
       modality: "aggregate",
@@ -466,108 +454,26 @@ export function seedDatasets(): Dataset[] {
   ];
 }
 
-export interface SeedBooks {
-  datasets: Dataset[];
-  consents: ConsentRecord[];
-  sales: LicenseSale[];
-  tokens: CdatToken[];
-  payouts: Payout[];
-  ledger: LedgerEntry[];
-  nextOnchainId: number;
-  platformUsd: number;
-}
-
-export function seedBooks(): SeedBooks {
-  const datasets = seedDatasets();
-  let ledger: LedgerEntry[] = [];
-  const consents: ConsentRecord[] = [];
-
-  for (const dataset of datasets) {
-    const consent: ConsentRecord = {
-      id: `consent_${dataset.id}`,
-      cid: dataset.ownerCid,
-      product: dataset.product,
-      datasetId: dataset.id,
-      granted: true,
-      scopes: dataset.scopes,
-      purpose: "data_licensing",
-      timestamp: dataset.createdAt,
-    };
-    ledger = appendEntry(
-      ledger,
-      "grant",
-      dataset.createdAt,
-      `${dataset.ownerCid} granted ${dataset.scopes.join(",")} on ${dataset.id}`,
-    );
-    consent.firmamentTx = ledger[ledger.length - 1]?.hash;
-    dataset.consentId = consent.id;
-    consents.push(consent);
-    ledger = appendEntry(
-      ledger,
-      "list",
-      dataset.createdAt,
-      `${dataset.id} listed at ${dataset.priceUsd} USD`,
-    );
+export function seedBooks() {
+  let books = emptyBooks();
+  for (const dataset of seedDatasets()) {
+    books = recordExistingListing(books, dataset);
   }
-
-  const spectre = datasets.find((dataset) => dataset.id === "ds_spectre");
-  if (!spectre) {
-    return { datasets, consents, sales: [], tokens: [], payouts: [], ledger, nextOnchainId: 1, platformUsd: 0 };
-  }
-  const soldAt = "2026-11-06T16:40:00.000Z";
-  const parts = splitAmount(spectre.priceUsd, spectre.revSharePct);
-  const sale: LicenseSale = {
-    id: "sale_spectre",
-    datasetId: spectre.id,
-    buyerId: "cid_harbor",
-    buyerName: "Harbor Desk",
-    amountUsd: parts.amountUsd,
-    userShareUsd: parts.userShareUsd,
-    platformShareUsd: parts.platformShareUsd,
-    soldAt,
-    status: "completed",
-    cdatTokenId: "cdat_1",
-  };
-  const token: CdatToken = {
-    tokenId: "cdat_1",
-    onchainId: 1,
-    datasetId: spectre.id,
-    saleId: sale.id,
-    licensee: sale.buyerId,
-    ownerCid: spectre.ownerCid,
-    terms: spectre.licenseTerms,
-    amountUsd: parts.amountUsd,
-    issuedAt: soldAt,
-    expiresAt: termExpiry(spectre.licenseTerms, soldAt),
-    burned: false,
-  };
-  ledger = appendEntry(
-    ledger,
-    "license",
-    soldAt,
-    `cdat_1 licenses ${spectre.id} to ${sale.buyerId} until ${token.expiresAt}`,
-  );
-  token.firmamentTx = ledger[ledger.length - 1]?.hash;
-  ledger = appendEntry(
-    ledger,
-    "payment",
-    soldAt,
-    `${sale.id} ${parts.amountUsd} owner ${parts.userShareUsd} platform ${parts.platformShareUsd}`,
-  );
-  const payout: Payout = {
-    saleId: sale.id,
-    cid: spectre.ownerCid,
-    amountUsd: parts.userShareUsd,
-    paid: false,
-  };
-  return {
-    datasets,
-    consents,
-    sales: [sale],
-    tokens: [token],
-    payouts: [payout],
-    ledger,
-    nextOnchainId: 2,
-    platformUsd: parts.platformShareUsd,
-  };
+  books = offerLicense(books, {
+    actorCid: "cid_harbor",
+    datasetId: "ds_spectre",
+    at: "2026-11-06T16:00:00.000Z",
+  });
+  const spectre = books.licenses.find((license) => license.datasetId === "ds_spectre");
+  if (!spectre) return books;
+  books = acceptLicense(books, {
+    actorCid: SESSION_CID,
+    licenseId: spectre.id,
+    at: "2026-11-06T16:40:00.000Z",
+  });
+  return offerLicense(books, {
+    actorCid: "cid_north",
+    datasetId: "ds_firm",
+    at: "2026-11-07T12:00:00.000Z",
+  });
 }

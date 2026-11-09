@@ -1,0 +1,12 @@
+{
+  // Cumulus://Cloud public landing page on cumuluscloud.app: static assets only, no Worker code.
+  // Deploy: cd landing && npx wrangler deploy
+  "name": "cumulus-site",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "not_found_handling": "404-page" },
+  "routes": [
+    { "pattern": "cumuluscloud.app", "custom_domain": true },
+    { "pattern": "www.cumuluscloud.app", "custom_domain": true }
+  ],
+  "observability": { "enabled": true }
+}

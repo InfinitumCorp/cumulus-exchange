@@ -1,0 +1,70 @@
+# Local Cumulus://ID and Cumulus Drive. Not a production deploy.
+# Keycloak, Postgres, and the Drive process are real servers. No Cloudflare and no Supabase.
+name: cumulus-id-stack
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cumulus
+      POSTGRES_PASSWORD: cumulus
+      POSTGRES_DB: cumulus
+    ports:
+      - "127.0.0.1:54330:5432"
+    volumes:
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/01-keycloak.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cumulus -d cumulus"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.2
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: cumulus
+      KC_DB_PASSWORD: cumulus
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://127.0.0.1:8088
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - ../keycloak/cumulus-realm.json:/opt/keycloak/data/import/cumulus-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  drive:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      CUMULUS_BIND: 0.0.0.0
+      CUMULUS_PORT: "8092"
+      CUMULUS_DATA_DIR: /data
+      DATABASE_URL: postgres://cumulus:cumulus@postgres:5432/cumulus
+      CUMULUS_STORAGE_DRIVER: filesystem
+      CUMULUS_KMS_MASTER_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      CUMULUS_BOOTSTRAP_TOKEN: stack-bootstrap-token
+      CUMULUS_SHARE_SECRET: stack-share-secret-01
+      CUMULUS_KEYCLOAK_ISSUER: http://127.0.0.1:8088/realms/cumulus
+      CUMULUS_KEYCLOAK_AUDIENCE: https://id.cumuluscloud.app
+      CUMULUS_KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/cumulus/protocol/openid-connect/certs
+    ports:
+      - "127.0.0.1:8092:8092"
+    volumes:
+      - drive-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+volumes:
+  drive-data:

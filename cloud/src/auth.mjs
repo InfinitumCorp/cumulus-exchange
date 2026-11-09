@@ -27,6 +27,40 @@ export function safeEqual(left, right) {
   return timingSafeEqual(a, b);
 }
 
+export function cidFromSupabasePayload(payload) {
+  const cid = payload?.app_metadata?.cid;
+  if (typeof cid !== "string" || !CID.test(cid)) {
+    throw new HttpError(401, "InvalidToken", "CID claim is required");
+  }
+  return {
+    cid,
+    purposes: ["drive.read", "drive.write", "drive.share"],
+    sub: typeof payload.sub === "string" ? payload.sub : "",
+  };
+}
+
+/**
+ * Node-process Supabase verifier. It still reads app_metadata.cid.
+ * The free launch path does not use this verifier. The Edge Function resolves
+ * cid from cumulus.identities, and the project-wide access token hook is off.
+ */
+export function createSupabaseVerifier({ issuer, jwksUrl }) {
+  const keys = createRemoteJWKSet(new URL(jwksUrl));
+  return async function verifyJwt(token) {
+    let payload;
+    try {
+      const result = await jwtVerify(token, keys, {
+        issuer,
+        algorithms: ["ES256", "RS256"],
+      });
+      payload = result.payload;
+    } catch {
+      throw new HttpError(401, "InvalidToken", "Supabase token was rejected");
+    }
+    return cidFromSupabasePayload(payload);
+  };
+}
+
 export function createKeycloakVerifier({ issuer, audience, jwks, jwksUrl }) {
   const keys = jwksUrl ? createRemoteJWKSet(new URL(jwksUrl)) : createLocalJWKSet(jwks);
   return async function verifyJwt(token) {

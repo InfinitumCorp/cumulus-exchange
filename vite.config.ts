@@ -1,5 +1,6 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -35,8 +36,23 @@ function cumulusDrivePreviewPlugin(): Plugin {
     name: "cumulus-drive-preview",
     apply: "serve",
     async configureServer(server) {
-      const { createDevPreview } = await import("./cloud/src/dev-preview.mjs");
-      const preview = await createDevPreview(join(server.config.root, "cloud/var/preview"));
+      // dev-preview.mjs ships with this branch. The exists check keeps `vite`
+      // from failing if the module is absent on a partial checkout.
+      const file = join(server.config.root, "cloud/src/dev-preview.mjs");
+      if (!existsSync(file)) {
+        console.warn(
+          "[cumulus-drive-preview] cloud/src/dev-preview.mjs is absent. /api/drive stays unmounted.",
+        );
+        return;
+      }
+      const mod = (await import(pathToFileURL(file).href)) as {
+        createDevPreview?: (dir: string) => Promise<{
+          middleware: (req: unknown, res: unknown, next: () => void) => void;
+          close: () => void | Promise<void>;
+        }>;
+      };
+      if (!mod.createDevPreview) return;
+      const preview = await mod.createDevPreview(join(server.config.root, "cloud/var/preview"));
       server.middlewares.use((req, res, next) => preview.middleware(req, res, next));
       server.httpServer?.once("close", () => {
         void preview.close();

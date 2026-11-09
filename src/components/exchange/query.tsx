@@ -4,7 +4,8 @@ import { PRODUCT_LABEL } from "@/lib/exchange/model";
 export function QueryView() {
   const datasetsAll = useExchange((state) => state.datasets);
   const tokens = useExchange((state) => state.tokens);
-  const datasets = readableDatasets({ datasets: datasetsAll, tokens });
+  const actorCid = useExchange((state) => state.actorCid);
+  const datasets = readableDatasets({ datasets: datasetsAll, tokens, actorCid });
   const queryDatasetId = useExchange((state) => state.queryDatasetId);
   const expression = useExchange((state) => state.expression);
   const queryRows = useExchange((state) => state.queryRows);

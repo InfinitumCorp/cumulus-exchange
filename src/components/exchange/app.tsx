@@ -1,3 +1,4 @@
+import { FirmSuite } from "@/lib/firm/FirmSuite";
 import { useEffect } from "react";
 import { CollectView } from "@/components/exchange/collect";
 import { DriveView } from "@/components/exchange/drive";
@@ -7,7 +8,8 @@ import { LedgerView } from "@/components/exchange/ledger";
 import { LicensesView } from "@/components/exchange/licenses";
 import { MarketView } from "@/components/exchange/market";
 import { QueryView } from "@/components/exchange/query";
-import { money } from "@/lib/exchange/model";
+import { HTMLSelect } from "@blueprintjs/core";
+import { money, PREVIEW_TENANTS } from "@/lib/exchange/model";
 import { session, useExchange, type View } from "@/lib/exchange/store";
 
 const NAV: { id: View; label: string; icon: string }[] = [
@@ -31,8 +33,11 @@ function Icon({ d }: { d: string }) {
 export function ExchangeApp() {
   const view = useExchange((state) => state.view);
   const wallet = useExchange((state) => state.walletUsd);
+  const actorCid = useExchange((state) => state.actorCid);
+  const setActor = useExchange((state) => state.setActor);
   const setView = useExchange((state) => state.setView);
   const hydrate = useExchange((state) => state.hydrate);
+  const actor = PREVIEW_TENANTS.find((tenant) => tenant.cid === actorCid);
 
   useEffect(() => {
     hydrate();
@@ -42,12 +47,24 @@ export function ExchangeApp() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-kicker">Infinitum · one product</div>
+          <div className="brand-kicker">Infinitum Corporation®</div>
           <div className="brand-title">Cumulus://Cloud</div>
           <div className="brand-sub">Cumulus Drive</div>
         </div>
         <div className="identity">
-          <span className="hide-sm">{session.mail}</span>
+          <HTMLSelect
+            aria-label="Preview tenant"
+            minimal
+            value={actorCid}
+            onChange={(event) => setActor(event.currentTarget.value)}
+          >
+            {PREVIEW_TENANTS.map((tenant) => (
+              <option key={tenant.cid} value={tenant.cid}>
+                {tenant.name}
+              </option>
+            ))}
+          </HTMLSelect>
+          <span className="hide-sm">{actor?.mail ?? session.mail}</span>
           <span className="wallet">{money(wallet)}</span>
         </div>
       </header>
@@ -73,6 +90,7 @@ export function ExchangeApp() {
           {view === "ledger" && <LedgerView />}
           {view === "query" && <QueryView />}
           {view === "collect" && <CollectView />}
+          {view === "home" && <FirmSuite product="cumulus-exchange" />}
         </main>
       </div>
       <nav className="tabbar" aria-label="Cumulus://Cloud">

@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Cumulus Drive storage. Local filesystem is the primary driver. Not deployed.",
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test test/*.test.mjs worker/test/*.test.mjs",
     "migrate": "node scripts/migrate.mjs",
     "licenses": "node scripts/check-licenses.mjs"
   },

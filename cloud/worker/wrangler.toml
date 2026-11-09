@@ -1,0 +1,13 @@
+# Free Cloudflare Worker for the Cumulus console and Drive proxy.
+# Do not add an account identifier, KV, D1, or R2. The operator's login
+# supplies the account at deploy time. Secrets are set with `wrangler secret put`.
+name = "cumulus-cloud"
+main = "src/index.mjs"
+compatibility_date = "2026-11-08"
+workers_dev = true
+
+[assets]
+directory = "./assets"
+binding = "ASSETS"
+run_worker_first = true
+not_found_handling = "single-page-application"

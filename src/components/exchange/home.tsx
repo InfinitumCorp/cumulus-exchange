@@ -39,8 +39,9 @@ export function HomeView() {
         <div>
           <h1 className="pane-title">Cumulus://Cloud</h1>
           <p className="lede">
-            One product. Cumulus://Cloud is Cumulus Drive. Storage, compute, databases and AI
-            infrastructure, with an opt-in license surface for data you choose to offer.
+            Infinitum Corporation®. One product. Cumulus://Cloud is Cumulus Drive. Storage,
+            compute, databases and AI infrastructure for civilian and business cyber workloads,
+            with an opt-in license surface for data you choose to offer.
           </p>
         </div>
       </div>
