@@ -22,9 +22,10 @@ A local Drive service under `cloud/`:
 - Keycloak JWT tenant isolation
 - backup and restore of the database rows and ciphertext blobs
 - `/healthz`, `/readyz`, and Prometheus text
+- a dev-only Drive screen in the preview (`/api/drive`) for the demo CID. Production startup does not mint that session.
 
 The Supabase project Infinitum Corp (`ivqiskeziohbbtkcvlun`, eu-west-1, free plan) is recorded only as a future swap target. Migrations are not applied to it. Tests use SQLite and, for the S3 stub and Postgres path, local containers only.
 
 ## Still not operational
 
-No host, disk volume, TLS certificate, Keycloak realm, backup target, or on-call sink exists. The free-plan pause, 1 GB cap, and 50 MB file cap are launch risks if the service is later pointed at that Supabase project. See `cloud/README.md`.
+No host, disk volume, TLS certificate, running Keycloak, backup target, or on-call sink exists. `cloud/keycloak/cumulus-realm.json` is the realm definition for `id.cumuluscloud.app` and has not been imported. The free-plan pause, 1 GB cap, and 50 MB file cap are launch risks if the service is later pointed at that Supabase project. See `cloud/README.md`.

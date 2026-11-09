@@ -36,7 +36,8 @@ function cumulusDrivePreviewPlugin(): Plugin {
     name: "cumulus-drive-preview",
     apply: "serve",
     async configureServer(server) {
-      // Cloud plane owns this module (PR #4). Do not add it under cloud/ here.
+      // dev-preview.mjs ships with this branch. The exists check keeps `vite`
+      // from failing if the module is absent on a partial checkout.
       const file = join(server.config.root, "cloud/src/dev-preview.mjs");
       if (!existsSync(file)) {
         console.warn(
