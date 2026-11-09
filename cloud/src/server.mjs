@@ -1,7 +1,7 @@
 import { createMetrics } from "./metrics.mjs";
 import { openDatabase } from "./db.mjs";
 import { createFilesystemDriver, createS3Driver } from "./storage.mjs";
-import { createKeycloakVerifier } from "./auth.mjs";
+import { createKeycloakVerifier, createSupabaseVerifier } from "./auth.mjs";
 import { createDrive, createHandler } from "./drive.mjs";
 import { parseMasterKey } from "./crypto.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
@@ -25,14 +25,20 @@ export async function createServer(options) {
   }
   const config = options.config ?? loadConfig(options.env ?? {});
   const metrics = options.metrics ?? createMetrics();
+  const authMode = options.authMode ?? "keycloak";
   const verifier =
     options.verifier ??
-    createKeycloakVerifier({
-      issuer: options.issuer ?? config.issuer,
-      audience: options.audience ?? config.audience,
-      jwks: options.jwks,
-      jwksUrl: options.jwks ? undefined : (options.jwksUrl ?? config.jwksUrl),
-    });
+    (authMode === "supabase"
+      ? createSupabaseVerifier({
+          issuer: options.issuer,
+          jwksUrl: options.jwksUrl,
+        })
+      : createKeycloakVerifier({
+          issuer: options.issuer ?? config.issuer,
+          audience: options.audience ?? config.audience,
+          jwks: options.jwks,
+          jwksUrl: options.jwks ? undefined : (options.jwksUrl ?? config.jwksUrl),
+        }));
   const drive = createDrive({
     db,
     storage,

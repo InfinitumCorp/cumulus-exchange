@@ -39,6 +39,33 @@ npm test
 
 `cloud/deploy/docker-compose.stack.yml` starts a real Keycloak (realm `cumulus`), Postgres, and the Drive process. CI runs `test/e2e-stack.test.mjs` against that stack with `CUMULUS_E2E=1`. Those tests log in through Keycloak with PKCE. They do not use a demo session. The stack is local only and is not a deploy.
 
+## Supabase mode (local CLI only)
+
+`CUMULUS_AUTH_MODE=supabase` on the Node process keeps Keycloak as the default and adds a second verifier. That Node verifier still reads `cid` from `app_metadata.cid`. It is not the free launch path. The live project ref is still refused.
+
+The free path is the Edge Function in `cloud/supabase/functions/drive` behind the Worker in `cloud/worker`. The function checks Supabase Auth JWTs against the project JWKS (`ES256` or `RS256`) and loads `cid` from `cumulus.identities` where `user_id` is the verified `sub`. It does not read a cid claim from the token.
+
+Metadata lives in schema `cumulus` under `cloud/supabase/migrations`. Every table has row level security. `cumulus.tenants` is `SELECT` only for `authenticated`. `max_bytes` and `used_bytes` change only as `service_role`, or inside `cumulus.enforce_object_quota()`, which is `security definer` and runs as its owner. The Edge Function calls PostgREST with the user's Supabase JWT, so PostgREST sets the `authenticated` role and `request.jwt.claims` and the policies apply. `cumulus.current_cid()` resolves the same identity row from `sub`. The quota trigger enforces the tenant cap and the 50 MB file cap for that role. A share download checks the HMAC first, then reads through the service role.
+
+Storage uses the private bucket `cumulus-drive` (not public, 50 MB file limit) through Supabase Storage's S3 endpoint. Migration `20261108120000_tenant_rls_and_bucket.sql` creates that bucket and does not add `anon` or `authenticated` policies on `storage.objects`. A direct Storage REST call with a user JWT is denied. Object keys are `tenants/<tenantId>/<blobId>`, the same layout as the Node S3 driver. The local end-to-end test probes that driver against the CLI's S3 endpoint, then exercises the Drive API at `cloud/supabase/functions/drive`. CI runs `sh scripts/supabase-e2e.sh`, which starts that stack, resets only the local database, and covers login, upload, download, share, quota, delete, tenant isolation, denied tenant writes, and denied direct Storage access. It does not link or deploy project `ivqiskeziohbbtkcvlun`.
+
+The Worker serves the Vite console as static assets and proxies `/api/*` on any host, plus `/v1/*` and `/healthz` on `cloud.cumuluscloud.app`, to `SUPABASE_FUNCTION_URL`. `cloud/worker/wrangler.toml` has no account id and no KV, D1, or R2. Deploy steps are in `cloud/DEPLOY.md`.
+
+DNS for `id.cumuluscloud.app` and `cloud.cumuluscloud.app` is in `docs/cloudflare-dns-email.md`. Supabase custom domains are not required.
+
+## Custom access token hook
+
+**The project-wide hook is removed.** `cloud/supabase/config.toml` does not enable `[auth.hook.custom_access_token]`. The migration drops `public.custom_access_token_hook`. Do not create it again on the free project.
+
+What that hook would affect if it were turned back on:
+
+- Supabase Auth runs it for every access token the project issues: password login, refresh, signup, OAuth, and magic link. That is every user of the project, including people who never call Drive.
+- The old function read `cumulus.identities` and wrote `app_metadata.cid` into the token. Row level security used to trust that claim.
+- An exception in the hook fails token issuance. A missing grant, a broken `cumulus.identities` table, or a bad cast would reject logins for the whole project. The hook does not see `x-cumulus-purpose`. It does not grant Storage access. It only rewrites claims, so a bad rewrite can attach the wrong tenant or none.
+- Auth would depend on Drive's identity table. Drive would then depend on Auth having succeeded. A fault in either direction takes both down.
+
+With the hook off, login does not touch `cumulus.identities`. The Edge Function and `cumulus.current_cid()` read that table after the JWT is verified. A broken identity row fails the Drive request and fails closed. It does not fail Auth. A cid stuffed into the token is ignored.
+
 ## Environment for a future host
 
 Do not point these at the live project unless that swap has been explicitly approved.
@@ -55,6 +82,6 @@ Do not point these at the live project unless that swap has been explicitly appr
 - `CUMULUS_PUBLIC_BASE_URL` (optional; derived from the cloud host)
 - `CUMULUS_CORS_ORIGINS` (optional exact origins; no wildcard)
 
-A CID string is not a credential. Callers need a Keycloak RS256 JWT whose `cid` claim is bound to a tenant, plus `x-cumulus-purpose` (`drive.read`, `drive.write`, or `drive.share`).
+A CID string is not a credential. Callers need a JWT bound to a tenant, plus `x-cumulus-purpose` (`drive.read`, `drive.write`, or `drive.share`). Keycloak mode requires an RS256 token whose `cid` claim is present. The Edge Function requires an Auth token whose `sub` has a row in `cumulus.identities`. The Node Supabase verifier, which is not the Worker path, still requires `app_metadata.cid`.
 
 The live Supabase hostname and project ref are refused unless `CUMULUS_ALLOW_SUPABASE=I-understand-this-touches-prod`. That variable is not set anywhere in this repository.
