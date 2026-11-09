@@ -85,6 +85,19 @@ function toSql(run: Run): Sql {
   return sql;
 }
 
+async function readMigrationFiles(): Promise<Record<string, string>> {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const dir = join(dirname(fileURLToPath(import.meta.url)), "../../migrations");
+  const names = (await readdir(dir)).filter((name) => name.endsWith(".sql"));
+  const files: Record<string, string> = {};
+  for (const name of names) {
+    files[`/migrations/${name}`] = await readFile(join(dir, name), "utf8");
+  }
+  return files;
+}
+
 function createNeonSql(): Promise<Sql> {
   globalRef.__pgSqlPromise__ ??= (async () => {
     // Regular Postgres driver: node-postgres (`pg`) — works directly with Neon's
@@ -107,11 +120,17 @@ function createNeonSql(): Promise<Sql> {
 
 async function createPgliteSql(): Promise<Sql> {
   // Embedded Postgres, imported on demand so it never loads on the Neon path.
-  // One in-memory instance per process, shared across HMR module instances, so
-  // data survives source edits (it resets on dev-server restart).
+  // Without CUMULUS_PGLITE_DIR the instance is in-memory and dies with the
+  // process. With that directory set, NodeFS keeps the data files on disk.
+  // Drive refuses to store files unless the directory is set.
   globalRef.__pgliteInstance__ ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
+    const dataDir = process.env.CUMULUS_PGLITE_DIR?.trim() || undefined;
+    const fs = dataDir
+      ? new (await import("@electric-sql/pglite/nodefs")).NodeFS(dataDir)
+      : undefined;
     const pg = new PGlite({
+      ...(dataDir ? { dataDir, fs, relaxedDurability: false } : {}),
       parsers: {
         [OID_INT8]: Number,
         [OID_DATE]: identity,
@@ -137,11 +156,11 @@ async function createPgliteSql(): Promise<Sql> {
   // passes serialized on a global chain so concurrent callers never
   // double-apply.
   const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
+    const glob = (import.meta as ImportMeta & { glob?: (pattern: string, opts: object) => Record<string, string> }).glob;
+    const migrations =
+      typeof glob === "function"
+        ? glob("/migrations/*.sql", { query: "?raw", import: "default", eager: true })
+        : await readMigrationFiles();
     const doneRows = await pg.query<{ name: string }>(
       "select name from _migrations",
     );
@@ -179,12 +198,24 @@ async function createSql(): Promise<Sql> {
   return dbSource === "neon" ? createNeonSql() : createPgliteSql();
 }
 
+/** Close the local PGLite instance so a later open sees a flushed directory. */
+export async function closeDb(): Promise<void> {
+  const pending = globalRef.__pgliteInstance__;
+  sqlPromise = null;
+  globalRef.__pgSqlPromise__ = undefined;
+  globalRef.__pgliteInstance__ = undefined;
+  globalRef.__pgliteMigrateChain__ = undefined;
+  if (!pending) return;
+  const pg = await pending.catch(() => undefined);
+  if (pg && !pg.closed) await pg.close();
+}
+
 /**
  * Get the shared, **server-only** SQL client. Neon when `DATABASE_URL` is set,
  * otherwise the local PGLite fallback. Memoized — safe to call per request.
  *
  * Schema comes from `migrations/*.sql`, auto-applied before the first query on
- * both backends — define tables there, never inline in server functions.
+ * the PGLite path. Neon applies the same files from `scripts/migrate.mjs`.
  */
 export function getSql(): Promise<Sql> {
   sqlPromise ??= createSql().catch((err) => {

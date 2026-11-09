@@ -56,9 +56,15 @@ test("non-.sql entries are dropped (readdir also yields the auth/ directory)", (
   assert.deepEqual(pendingMigrations(["auth", "README.md"], []), []);
 });
 
-test("the auth schema ships outside the globbed directory", () => {
+test("drive metadata is globbed and the auth schema source stays in migrations/auth", () => {
+  // This app opts in: 0002 references Better Auth's "user" table, so the
+  // verbatim 0001 copy is globbed with it. The source of that copy stays in
+  // migrations/auth and is checked byte-for-byte below.
   const migrationsDir = join(projectRoot(), "migrations");
-  assert.deepEqual(pendingMigrations(readdirSync(migrationsDir), []), []);
+  assert.deepEqual(pendingMigrations(readdirSync(migrationsDir), []), [
+    { name: "0001_auth.sql", path: "0001_auth.sql" },
+    { name: "0002_cumulus_drive.sql", path: "0002_cumulus_drive.sql" },
+  ]);
   assert.ok(readdirSync(join(migrationsDir, "auth")).includes("0001_auth.sql"));
 });
 
