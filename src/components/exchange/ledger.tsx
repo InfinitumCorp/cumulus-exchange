@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { money, splitHolds } from "@/lib/exchange/model";
-import { session, useExchange } from "@/lib/exchange/store";
+import { FIRMAMENT_CHANNEL, moneyCents, splitHolds } from "@/lib/exchange/model";
+import { auditVisibleTo } from "@/lib/exchange/lifecycle";
+import { useExchange } from "@/lib/exchange/store";
 
 export function LedgerView() {
   const [ready, setReady] = useState(false);
@@ -9,7 +10,10 @@ export function LedgerView() {
   const payouts = useExchange((state) => state.payouts);
   const sales = useExchange((state) => state.sales);
   const datasets = useExchange((state) => state.datasets);
-  const platform = useExchange((state) => state.platformUsd);
+  const platform = useExchange((state) => state.platformCents);
+  const actorCid = useExchange((state) => state.actorCid);
+  const auditAll = useExchange((state) => state.audit);
+  const audit = auditVisibleTo(auditAll, actorCid);
   const notice = useExchange((state) => state.notice);
   const settle = useExchange((state) => state.settle);
   const reset = useExchange((state) => state.reset);
@@ -19,8 +23,8 @@ export function LedgerView() {
   }, []);
 
   const pendingSum = payouts
-    .filter((payout) => payout.cid === session.cid && !payout.paid)
-    .reduce((sum, payout) => sum + payout.amountUsd, 0);
+    .filter((payout) => payout.cid === actorCid && !payout.paid)
+    .reduce((sum, payout) => sum + payout.amountCents, 0);
   const chart = sales.map((sale) => ({
     name: sale.cdatTokenId ?? sale.id.slice(0, 8),
     owner: sale.userShareUsd,
@@ -31,10 +35,10 @@ export function LedgerView() {
     <section className="pane">
       <div className="pane-head">
         <div>
-          <h1 className="pane-title">Firmament preview</h1>
+          <h1 className="pane-title">Firmament ledger preview</h1>
           <p className="lede">
-            Hash-chained locally. Production signs each grant, license, and payment with Ed25519.
-            Your pending owner share is {money(pendingSum)}. Platform treasury {money(platform)}.
+            Channel {FIRMAMENT_CHANNEL}. Hash-chained in this browser. Not a live Firmament post.
+            Pending owner share {moneyCents(pendingSum)}. Platform treasury {moneyCents(platform)}.
           </p>
         </div>
         <button className="btn" type="button" onClick={reset}>
@@ -71,8 +75,13 @@ export function LedgerView() {
                 </span>
               </span>
               {!payout.paid ? (
-                <button className="btn" type="button" onClick={() => settle(payout.saleId)}>
-                  Settle {money(payout.amountUsd)}
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={payout.cid !== actorCid}
+                  onClick={() => settle(payout.saleId)}
+                >
+                  Settle {moneyCents(payout.amountCents)}
                 </button>
               ) : (
                 <span className="row-price">Paid</span>
@@ -88,6 +97,7 @@ export function LedgerView() {
             <tr>
               <th>#</th>
               <th>Type</th>
+              <th>Channel</th>
               <th>Summary</th>
               <th>Hash</th>
             </tr>
@@ -97,6 +107,9 @@ export function LedgerView() {
               <tr key={entry.hash}>
                 <td>{entry.index}</td>
                 <td>{entry.type}</td>
+                <td>
+                  <span className="tag">preview</span>
+                </td>
                 <td>{entry.summary}</td>
                 <td className="mono">{entry.hash}</td>
               </tr>
@@ -105,6 +118,29 @@ export function LedgerView() {
         </table>
       </div>
       <p className="foot">Showing the latest 12 of {ledger.length} preview entries.</p>
+      <h2 className="pane-title">Audit trail</h2>
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Action</th>
+              <th>Actor</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...audit].reverse().slice(0, 12).map((event) => (
+              <tr key={event.id}>
+                <td>{event.at.slice(0, 19)}</td>
+                <td>{event.action}</td>
+                <td>{event.actorCid}</td>
+                <td>{event.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

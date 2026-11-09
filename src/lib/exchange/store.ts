@@ -1,26 +1,35 @@
 import { create } from "zustand";
 import {
-  appendEntry,
-  applyRecipe,
+  acceptLicense,
+  auditVisibleTo,
+  offerLicense,
+  publishDataset,
+  readRows,
+  recordRejectedTransfer,
+  revokeLicense,
+  setScope,
+  settlePayout,
+  type Books,
+} from "@/lib/exchange/lifecycle";
+import {
+  assertPreviewTenant,
   canRead,
-  columnsOf,
   enclaveReceipt,
   filterRows,
   isActiveToken,
   meaningScore,
-  REV_SHARE,
   rollup,
   SESSION_CID,
   SESSION_MAIL,
   SESSION_NAME,
-  splitAmount,
-  splitHolds,
   suggestPrice,
-  termExpiry,
+  tenantName,
+  type AuditEvent,
   type CdatToken,
   type ConsentRecord,
   type Dataset,
   type LedgerEntry,
+  type LicenseRecord,
   type LicenseSale,
   type Modality,
   type Payout,
@@ -33,15 +42,19 @@ import { seedBooks } from "@/lib/exchange/seed";
 
 export type View = "home" | "drive" | "market" | "detail" | "licenses" | "ledger" | "query" | "collect";
 
-const STORAGE_KEY = "cumulus-exchange-v1";
+const STORAGE_KEY = "cumulus-exchange-v2";
 
 interface Persisted {
   datasets: Dataset[];
   consents: ConsentRecord[];
+  licenses: LicenseRecord[];
   sales: LicenseSale[];
   tokens: CdatToken[];
   payouts: Payout[];
   ledger: LedgerEntry[];
+  audit: AuditEvent[];
+  wallets: Record<string, number>;
+  platformCents: number;
   walletUsd: number;
   platformUsd: number;
   nextOnchainId: number;
@@ -49,6 +62,7 @@ interface Persisted {
 
 export interface ExchangeState extends Persisted {
   view: View;
+  actorCid: string;
   selectedId: string | null;
   search: string;
   product: ProductId | "all";
@@ -68,7 +82,12 @@ export interface ExchangeState extends Persisted {
   setModality: (modality: Modality | "all") => void;
   setRegion: (region: RegionId | "all") => void;
   setCloudMax: (cloudMax: number) => void;
+  setActor: (cid: string) => void;
   license: (datasetId: string) => void;
+  accept: (licenseId: string) => void;
+  revokeLicense: (licenseId: string) => void;
+  setScopeGrant: (datasetId: string, scope: string, grant: boolean) => void;
+  rejectTransfer: (tokenId: string, toCid: string) => void;
   settle: (saleId: string) => void;
   revoke: (datasetId: string) => void;
   publish: (input: {
@@ -92,8 +111,32 @@ export interface ExchangeState extends Persisted {
   hydrate: () => void;
 }
 
+function withMoney(books: Books, actorCid: string): Persisted {
+  return {
+    ...books,
+    walletUsd: (books.wallets[actorCid] ?? 0) / 100,
+    platformUsd: books.platformCents / 100,
+  };
+}
+
+function toBooks(state: Persisted): Books {
+  return {
+    datasets: state.datasets,
+    consents: state.consents,
+    licenses: state.licenses,
+    sales: state.sales,
+    tokens: state.tokens,
+    payouts: state.payouts,
+    ledger: state.ledger,
+    audit: state.audit,
+    wallets: state.wallets,
+    platformCents: state.platformCents,
+    nextOnchainId: state.nextOnchainId,
+  };
+}
+
 function books(): Persisted {
-  return { ...seedBooks(), walletUsd: 2400 };
+  return withMoney(seedBooks(), SESSION_CID);
 }
 
 function persist(state: Persisted) {
@@ -101,15 +144,23 @@ function persist(state: Persisted) {
   const snapshot: Persisted = {
     datasets: state.datasets,
     consents: state.consents,
+    licenses: state.licenses,
     sales: state.sales,
     tokens: state.tokens,
     payouts: state.payouts,
     ledger: state.ledger,
+    audit: state.audit,
+    wallets: state.wallets,
+    platformCents: state.platformCents,
     walletUsd: state.walletUsd,
     platformUsd: state.platformUsd,
     nextOnchainId: state.nextOnchainId,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+}
+
+function noticeOf(error: unknown): string {
+  return error instanceof Error ? error.message : "That action was refused.";
 }
 
 function stamp(iso?: string) {
@@ -119,6 +170,7 @@ function stamp(iso?: string) {
 export const useExchange = create<ExchangeState>((set, get) => ({
   ...books(),
   view: "home",
+  actorCid: SESSION_CID,
   selectedId: null,
   search: "",
   product: "all",
@@ -138,220 +190,144 @@ export const useExchange = create<ExchangeState>((set, get) => ({
   setModality: (modality) => set({ modality }),
   setRegion: (region) => set({ region }),
   setCloudMax: (cloudMax) => set({ cloudMax }),
+  setActor: (cid) => {
+    try {
+      assertPreviewTenant(cid);
+      const state = get();
+      set({
+        actorCid: cid,
+        walletUsd: (state.wallets[cid] ?? 0) / 100,
+        notice: `Preview tenant is ${tenantName(cid)}.`,
+      });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
+    }
+  },
   license: (datasetId) => {
     const state = get();
-    const dataset = state.datasets.find((item) => item.id === datasetId);
-    if (!dataset || dataset.status !== "listed") {
-      set({ notice: "That set is not listed." });
-      return;
+    try {
+      const next = offerLicense(toBooks(state), {
+        actorCid: state.actorCid,
+        datasetId,
+        at: stamp(),
+      });
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({ ...saved, notice: "Offer recorded on the preview ledger. The owner accepts it.", view: "licenses" });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
     }
-    if (dataset.ownerCid === SESSION_CID) {
-      set({ notice: "You already own this set. Another CID has to license it." });
-      return;
+  },
+  accept: (licenseId) => {
+    const state = get();
+    try {
+      const next = acceptLicense(toBooks(state), { actorCid: state.actorCid, licenseId, at: stamp() });
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({ ...saved, notice: "Offer accepted. The CDAT is soulbound to the licensee.", view: "licenses" });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
     }
-    if (state.walletUsd < dataset.priceUsd) {
-      set({ notice: "FIRM wallet balance is short of the license price." });
-      return;
+  },
+  revokeLicense: (licenseId) => {
+    const state = get();
+    try {
+      const next = revokeLicense(toBooks(state), { actorCid: state.actorCid, licenseId, at: stamp() });
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({ ...saved, notice: "License revoked on the preview ledger." });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
     }
-    const at = stamp();
-    const parts = splitAmount(dataset.priceUsd, dataset.revSharePct);
-    const saleId = `sale_${dataset.id}_${at.slice(11, 19).replace(/:/g, "")}`;
-    const tokenId = `cdat_${state.nextOnchainId}`;
-    let ledger = appendEntry(
-      state.ledger,
-      "license",
-      at,
-      `${tokenId} licenses ${dataset.id} to ${SESSION_CID} until ${termExpiry(dataset.licenseTerms, at)}`,
-    );
-    const firmamentTx = ledger[ledger.length - 1]?.hash;
-    ledger = appendEntry(
-      ledger,
-      "payment",
-      at,
-      `${saleId} ${parts.amountUsd} owner ${parts.userShareUsd} platform ${parts.platformShareUsd}`,
-    );
-    const sale: LicenseSale = {
-      id: saleId,
-      datasetId,
-      buyerId: SESSION_CID,
-      buyerName: SESSION_NAME,
-      ...parts,
-      soldAt: at,
-      status: "completed",
-      cdatTokenId: tokenId,
-    };
-    const token: CdatToken = {
-      tokenId,
-      onchainId: state.nextOnchainId,
-      datasetId,
-      saleId,
-      licensee: SESSION_CID,
-      ownerCid: dataset.ownerCid,
-      terms: dataset.licenseTerms,
-      amountUsd: parts.amountUsd,
-      issuedAt: at,
-      expiresAt: termExpiry(dataset.licenseTerms, at),
-      burned: false,
-      firmamentTx,
-    };
-    const payout: Payout = {
-      saleId,
-      cid: dataset.ownerCid,
-      amountUsd: parts.userShareUsd,
-      paid: false,
-    };
-    const next: Persisted = {
-      datasets: state.datasets.map((item) =>
-        item.id === datasetId ? { ...item, status: "sold" } : item,
-      ),
-      consents: state.consents,
-      sales: [sale, ...state.sales],
-      tokens: [token, ...state.tokens],
-      payouts: [payout, ...state.payouts],
-      ledger,
-      walletUsd: Math.round((state.walletUsd - parts.amountUsd) * 100) / 100,
-      platformUsd: Math.round((state.platformUsd + parts.platformShareUsd) * 100) / 100,
-      nextOnchainId: state.nextOnchainId + 1,
-    };
-    persist(next);
-    set({
-      ...next,
-      notice: `Licensed. ${tokenId} issued. Owner share ${parts.userShareUsd.toFixed(2)} is pending settlement. Split check ${splitHolds(sale, dataset.revSharePct) ? "holds" : "failed"}.`,
-      view: "licenses",
-      queryDatasetId: datasetId,
-    });
+  },
+  setScopeGrant: (datasetId, scope, grant) => {
+    const state = get();
+    const decision = state.consents
+      .find((item) => item.datasetId === datasetId)
+      ?.decisions.find((item) => item.scope === scope);
+    if (decision && decision.granted === grant) return;
+    try {
+      const next = setScope(toBooks(state), {
+        actorCid: state.actorCid,
+        datasetId,
+        scope,
+        grant,
+        at: stamp(),
+      });
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({
+        ...saved,
+        notice: grant ? `Opted in to ${scope}.` : `Revoked ${scope}. The audit trail kept the grant.`,
+      });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
+    }
+  },
+  rejectTransfer: (tokenId, toCid) => {
+    const state = get();
+    try {
+      const next = recordRejectedTransfer(toBooks(state), {
+        actorCid: state.actorCid,
+        tokenId,
+        toCid,
+        at: stamp(),
+      });
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({ ...saved, notice: "CDAT licenses are soulbound and cannot be transferred." });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
+    }
   },
   settle: (saleId) => {
     const state = get();
-    const payout = state.payouts.find((item) => item.saleId === saleId);
-    if (!payout || payout.paid) {
-      set({ notice: "Nothing to settle." });
-      return;
+    try {
+      const next = settlePayout(toBooks(state), { actorCid: state.actorCid, saleId, at: stamp() });
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({ ...saved, notice: "Owner share settled into the preview wallet. No payment was sent." });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
     }
-    const at = stamp();
-    const ledger = appendEntry(
-      state.ledger,
-      "payment",
-      at,
-      `payout ${saleId} ${payout.amountUsd} to ${payout.cid}`,
-    );
-    const walletUsd =
-      payout.cid === SESSION_CID
-        ? Math.round((state.walletUsd + payout.amountUsd) * 100) / 100
-        : state.walletUsd;
-    const next: Persisted = {
-      ...state,
-      payouts: state.payouts.map((item) =>
-        item.saleId === saleId ? { ...item, paid: true, paidAt: at } : item,
-      ),
-      ledger,
-      walletUsd,
-    };
-    persist(next);
-    set({
-      ...next,
-      notice:
-        payout.cid === SESSION_CID
-          ? `Settled ${payout.amountUsd.toFixed(2)} into your FIRM wallet.`
-          : `Settled ${payout.amountUsd.toFixed(2)} to ${payout.cid}.`,
-    });
   },
   revoke: (datasetId) => {
     const state = get();
-    const dataset = state.datasets.find((item) => item.id === datasetId);
-    const consent = state.consents.find((item) => item.datasetId === datasetId);
-    if (!dataset || dataset.ownerCid !== SESSION_CID || !consent?.granted) {
-      set({ notice: "Only the owning CID can revoke a live grant." });
-      return;
+    try {
+      const consent = state.consents.find((item) => item.datasetId === datasetId);
+      const scopes = consent?.decisions.filter((decision) => decision.granted).map((decision) => decision.scope) ?? [];
+      if (scopes.length === 0) {
+        set({ notice: "No live scope to revoke." });
+        return;
+      }
+      let next = toBooks(state);
+      const at = stamp();
+      for (const scope of scopes) {
+        next = setScope(next, { actorCid: state.actorCid, datasetId, scope, grant: false, at });
+      }
+      const saved = withMoney(next, state.actorCid);
+      persist(saved);
+      set({ ...saved, notice: "Consent revoked. Listings and CDAT licenses for this set are closed." });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
     }
-    const at = stamp();
-    const ledger = appendEntry(state.ledger, "revoke", at, `${consent.id} revoked ${datasetId}`);
-    const hash = ledger[ledger.length - 1]?.hash;
-    const next: Persisted = {
-      ...state,
-      datasets: state.datasets.map((item) =>
-        item.id === datasetId ? { ...item, status: "revoked" } : item,
-      ),
-      consents: state.consents.map((item) =>
-        item.id === consent.id ? { ...item, granted: false, timestamp: at, firmamentTx: hash } : item,
-      ),
-      tokens: state.tokens.map((token) =>
-        token.datasetId === datasetId ? { ...token, burned: true } : token,
-      ),
-      ledger,
-    };
-    persist(next);
-    set({
-      ...next,
-      notice: "Consent revoked. The listing is off the exchange and any CDAT for it is burned.",
-    });
   },
   publish: (input) => {
     const state = get();
-    const rows = applyRecipe(input.rows, input.recipe);
-    const columns = columnsOf(rows);
-    if (columns.length === 0) {
-      set({ notice: "A listing needs at least one column after the prep recipe." });
-      return;
+    try {
+      const next = publishDataset(toBooks(state), { ...input, actorCid: state.actorCid, at: stamp() });
+      const saved = withMoney(next, state.actorCid);
+      const created = next.datasets[next.datasets.length - 1];
+      persist(saved);
+      set({
+        ...saved,
+        selectedId: created?.id ?? null,
+        view: "detail",
+        notice: "Listed. Each opted-in scope is on the preview ledger. You keep 85% of a sale.",
+      });
+    } catch (error) {
+      set({ notice: noticeOf(error) });
     }
-    const at = stamp();
-    const id = `ds_${state.nextOnchainId}_${input.product}`;
-    const consentId = `consent_${id}`;
-    let ledger = appendEntry(
-      state.ledger,
-      "grant",
-      at,
-      `${SESSION_CID} granted ${input.scopes.join(",")} on ${id}`,
-    );
-    const firmamentTx = ledger[ledger.length - 1]?.hash;
-    ledger = appendEntry(ledger, "list", at, `${id} listed at ${input.priceUsd} USD`);
-    const dataset: Dataset = {
-      id,
-      ownerCid: SESSION_CID,
-      ownerName: SESSION_NAME,
-      product: input.product,
-      title: input.title,
-      description: input.description,
-      schema: columns.join(","),
-      columns,
-      rows,
-      sizeEstimate: rows.length * 1200,
-      privacyLevel: "aggregated",
-      licenseTerms: input.licenseTerms,
-      priceUsd: input.priceUsd,
-      revSharePct: REV_SHARE,
-      status: "listed",
-      createdAt: at,
-      consentId,
-      scopes: input.scopes,
-      region: input.region,
-      modality: input.modality,
-      topics: input.topics,
-    };
-    const consent: ConsentRecord = {
-      id: consentId,
-      cid: SESSION_CID,
-      product: input.product,
-      datasetId: id,
-      granted: true,
-      scopes: input.scopes,
-      purpose: "data_licensing",
-      timestamp: at,
-      firmamentTx,
-    };
-    const next: Persisted = {
-      ...state,
-      datasets: [dataset, ...state.datasets],
-      consents: [consent, ...state.consents],
-      ledger,
-    };
-    persist(next);
-    set({
-      ...next,
-      selectedId: id,
-      view: "detail",
-      notice: "Listed. The grant is on the preview ledger. You keep 85% of a sale.",
-    });
   },
   setQueryDataset: (id) => set({ queryDatasetId: id, queryRows: [], receipt: "" }),
   setExpression: (expression) => set({ expression }),
@@ -363,24 +339,25 @@ export const useExchange = create<ExchangeState>((set, get) => ({
       set({ notice: "Pick a dataset.", queryRows: [], receipt: "" });
       return;
     }
-    if (!canRead(dataset, state.tokens, SESSION_CID)) {
+    try {
+      const rows = readRows(toBooks(state), state.actorCid, dataset.id);
+      const queryRows = filterRows(rows, state.expression);
+      const receipt = enclaveReceipt(dataset.id, state.expression, queryRows.length);
       set({
-        notice: "Query needs an active CDAT, or the set has to be yours.",
+        queryRows,
+        receipt,
+        rollField: dataset.columns[0] ?? "",
+        notice: `${queryRows.length} row${queryRows.length === 1 ? "" : "s"}. Receipt ${receipt}.`,
+      });
+    } catch (error) {
+      set({
+        notice: noticeOf(error),
         queryRows: [],
         receipt: "",
         view: "detail",
         selectedId: dataset.id,
       });
-      return;
     }
-    const queryRows = filterRows(dataset.rows, state.expression);
-    const receipt = enclaveReceipt(dataset.id, state.expression, queryRows.length);
-    set({
-      queryRows,
-      receipt,
-      rollField: dataset.columns[0] ?? "",
-      notice: `${queryRows.length} row${queryRows.length === 1 ? "" : "s"}. Receipt ${receipt}.`,
-    });
   },
   reset: () => {
     const next = books();
@@ -388,6 +365,7 @@ export const useExchange = create<ExchangeState>((set, get) => ({
     set({
       ...next,
       view: "market",
+      actorCid: SESSION_CID,
       selectedId: null,
       search: "",
       product: "all",
@@ -408,8 +386,15 @@ export const useExchange = create<ExchangeState>((set, get) => ({
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as Persisted;
-      if (!Array.isArray(parsed.datasets) || !Array.isArray(parsed.ledger)) return;
-      set(parsed);
+      if (!Array.isArray(parsed.datasets) || !Array.isArray(parsed.ledger) || !Array.isArray(parsed.licenses)) {
+        return;
+      }
+      const actorCid = get().actorCid;
+      set({
+        ...parsed,
+        walletUsd: (parsed.wallets?.[actorCid] ?? 0) / 100,
+        platformUsd: parsed.platformCents / 100,
+      });
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
     }
@@ -438,22 +423,29 @@ export function scoreOf(dataset: Dataset, search: string): number {
   return meaningScore(dataset, search);
 }
 
-export function heldTokens(tokens: CdatToken[]): CdatToken[] {
-  return tokens.filter((token) => token.licensee === SESSION_CID);
+export function heldTokens(tokens: CdatToken[], actor = SESSION_CID): CdatToken[] {
+  return tokens.filter((token) => token.licensee === actor);
 }
 
-export function readableDatasets(state: Pick<ExchangeState, "datasets" | "tokens">): Dataset[] {
-  return state.datasets.filter((dataset) => canRead(dataset, state.tokens, SESSION_CID));
+export function readableDatasets(
+  state: Pick<ExchangeState, "datasets" | "tokens"> & { actorCid?: string },
+): Dataset[] {
+  const actor = state.actorCid || SESSION_CID;
+  return state.datasets.filter((dataset) => canRead(dataset, state.tokens, actor));
 }
 
 export function peerPrice(datasets: Dataset[], product: ProductId, fallback: number): number {
   return suggestPrice(datasets, product, fallback);
 }
 
-export function activeLicense(tokens: CdatToken[], datasetId: string): boolean {
+export function activeLicense(tokens: CdatToken[], datasetId: string, actor = SESSION_CID): boolean {
   return tokens.some(
-    (token) => token.datasetId === datasetId && token.licensee === SESSION_CID && isActiveToken(token),
+    (token) => token.datasetId === datasetId && token.licensee === actor && isActiveToken(token),
   );
+}
+
+export function visibleAudit(state: Pick<ExchangeState, "audit" | "actorCid">) {
+  return auditVisibleTo(state.audit, state.actorCid);
 }
 
 export const session = { cid: SESSION_CID, name: SESSION_NAME, mail: SESSION_MAIL };

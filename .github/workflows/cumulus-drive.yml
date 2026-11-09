@@ -1,0 +1,104 @@
+name: cumulus-drive
+
+on:
+  push:
+    paths:
+      - "cloud/**"
+      - ".github/workflows/cumulus-drive.yml"
+  pull_request:
+    paths:
+      - "cloud/**"
+      - ".github/workflows/cumulus-drive.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: drive tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+      - name: Install Drive dependencies
+        working-directory: cloud
+        run: npm ci
+      - name: Reject GPL, AGPL, and MinIO
+        working-directory: cloud
+        run: npm run licenses
+      - name: Start local Postgres and SeaweedFS
+        run: docker compose -f cloud/deploy/docker-compose.yml up -d
+      - name: Test
+        working-directory: cloud
+        run: npm test
+  e2e:
+    name: live Keycloak and Drive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+      - name: Install Drive dependencies
+        working-directory: cloud
+        run: npm ci
+      - name: Start Keycloak, Postgres, and Drive
+        run: docker compose -f cloud/deploy/docker-compose.stack.yml up -d --build
+      - name: Wait until Keycloak and Drive answer
+        run: |
+          for i in $(seq 1 40); do
+            keycloak=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8088/realms/cumulus || true)
+            drive=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8092/healthz || true)
+            if [ "$keycloak" = "200" ] && [ "$drive" = "200" ]; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose -f cloud/deploy/docker-compose.stack.yml logs
+          exit 1
+      - name: End-to-end login and Drive
+        working-directory: cloud
+        run: node --test test/e2e-stack.test.mjs
+        env:
+          CUMULUS_E2E: "1"
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f cloud/deploy/docker-compose.stack.yml down -v
+  supabase:
+    name: local Supabase Auth and Drive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+      - name: Install Drive dependencies
+        working-directory: cloud
+        run: npm ci
+      - name: Install Supabase CLI
+        run: |
+          curl -fsSL -o /tmp/supabase.tar.gz https://github.com/supabase/cli/releases/download/v2.72.7/supabase_linux_amd64.tar.gz
+          sudo tar -C /usr/local/bin -xzf /tmp/supabase.tar.gz
+          supabase --version
+      - name: End-to-end login, storage, and tenant isolation
+        working-directory: cloud
+        run: sh scripts/supabase-e2e.sh
+  worker:
+    name: cloudflare worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Worker unit tests
+        working-directory: cloud
+        run: node --test worker/test/*.test.mjs

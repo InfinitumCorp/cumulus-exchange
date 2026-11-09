@@ -60,13 +60,17 @@ export function magicMatches(mediaType: AllowedType, bytes: Uint8Array): boolean
   }
 }
 
+function isForbiddenNameChar(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return code <= 31 || code === 127 || char === "\\" || char === "/";
+}
+
 /** Private display label. Never used as a filesystem path. */
 export function sanitizeDisplayName(raw: string | null): string {
-  const cleaned = (raw ?? "")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/[\\/]/g, "")
-    .replace(/\.\./g, "")
-    .trim()
-    .slice(0, 180);
+  let cleaned = "";
+  for (const char of raw ?? "") {
+    if (!isForbiddenNameChar(char)) cleaned += char;
+  }
+  cleaned = cleaned.replace(/\.\./g, "").trim().slice(0, 180);
   return cleaned.length > 0 ? cleaned : "file";
 }

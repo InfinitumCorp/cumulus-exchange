@@ -1,5 +1,6 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -30,6 +31,35 @@ function hasGlobbedMigrations(root: string): boolean {
  * migrations — no schema to apply — skips it entirely rather than paying for a
  * PGLite instance it never queries.
  */
+function cumulusDrivePreviewPlugin(): Plugin {
+  return {
+    name: "cumulus-drive-preview",
+    apply: "serve",
+    async configureServer(server) {
+      // Cloud plane owns this module (PR #4). Do not add it under cloud/ here.
+      const file = join(server.config.root, "cloud/src/dev-preview.mjs");
+      if (!existsSync(file)) {
+        console.warn(
+          "[cumulus-drive-preview] cloud/src/dev-preview.mjs is absent. /api/drive stays unmounted.",
+        );
+        return;
+      }
+      const mod = (await import(pathToFileURL(file).href)) as {
+        createDevPreview?: (dir: string) => Promise<{
+          middleware: (req: unknown, res: unknown, next: () => void) => void;
+          close: () => void | Promise<void>;
+        }>;
+      };
+      if (!mod.createDevPreview) return;
+      const preview = await mod.createDevPreview(join(server.config.root, "cloud/var/preview"));
+      server.middlewares.use((req, res, next) => preview.middleware(req, res, next));
+      server.httpServer?.once("close", () => {
+        void preview.close();
+      });
+    },
+  };
+}
+
 function pgliteBootstrapPlugin(): Plugin {
   return {
     name: "app-builder:pglite-bootstrap",
@@ -159,6 +189,7 @@ export default defineConfig(({ command, isPreview }) => ({
   resolve: { tsconfigPaths: true },
   plugins: [
     pgliteBootstrapPlugin(),
+    cumulusDrivePreviewPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
     // Dev-only /__app-env, read by scripts/check-auth-invariant.mjs.

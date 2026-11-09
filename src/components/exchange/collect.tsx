@@ -20,7 +20,7 @@ export function CollectView() {
   const [product, setProduct] = useState<ProductId | null>(null);
   const [price, setPrice] = useState(0);
   const [region, setRegion] = useState<RegionId>("iad");
-  const [consent, setConsent] = useState(false);
+  const [scopes, setScopes] = useState<string[]>([]);
   const [redact, setRedact] = useState<string[]>([]);
   const [bucket, setBucket] = useState<string[]>([]);
 
@@ -35,7 +35,7 @@ export function CollectView() {
     setProduct(next);
     setPrice(item.priceUsd);
     setRegion(item.region);
-    setConsent(false);
+    setScopes([]);
     setRedact([]);
     setBucket([]);
   }
@@ -138,29 +138,33 @@ export function CollectView() {
               </tbody>
             </table>
           </div>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={consent}
-              onChange={(event) => setConsent(event.target.checked)}
-            />
-            <span>
-              I consent to license this aggregate for {template.scopes.join(", ")}. The grant is
-              written to the preview ledger and can be revoked.
-            </span>
-          </label>
+          <p className="lede">Opt in to each scope. Unchecked scopes stay off the exchange.</p>
+          {template.scopes.map((scope) => (
+            <label className="check" key={scope}>
+              <input
+                type="checkbox"
+                checked={scopes.includes(scope)}
+                onChange={(event) =>
+                  setScopes((current) =>
+                    event.target.checked ? [...current, scope] : current.filter((item) => item !== scope),
+                  )
+                }
+              />
+              <span>I consent to license {scope}. This grant can be revoked.</span>
+            </label>
+          ))}
           <div className="actions">
             <button
               className="btn-primary"
               type="button"
-              disabled={!consent || !Number.isFinite(price) || price <= 0}
+              disabled={scopes.length === 0 || !Number.isFinite(price) || price <= 0}
               onClick={() =>
                 publish({
                   product: template.product,
                   title: template.title,
                   description: template.description,
                   rows: template.rows,
-                  scopes: template.scopes,
+                  scopes,
                   licenseTerms: template.licenseTerms,
                   priceUsd: price,
                   region,

@@ -1,10 +1,12 @@
-import { useState } from "react";
-import { CoverageMap } from "@/components/exchange/coverage";
+import { useEffect, useState } from "react";
+import { HTMLSelect } from "@blueprintjs/core";
+import { Cell, Column, Table2 } from "@blueprintjs/table";
 import {
   MODALITY_LABEL,
   PRODUCT_LABEL,
   REGION_LABEL,
   money,
+  type Dataset,
   type Modality,
   type ProductId,
   type RegionId,
@@ -16,7 +18,8 @@ const MODALITIES = Object.keys(MODALITY_LABEL) as Modality[];
 const REGIONS = Object.keys(REGION_LABEL) as RegionId[];
 
 export function MarketView() {
-  const [coverage, setCoverage] = useState(false);
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
   const search = useExchange((state) => state.search);
   const product = useExchange((state) => state.product);
   const modality = useExchange((state) => state.modality);
@@ -53,9 +56,6 @@ export function MarketView() {
             editions and government workloads stay off the product.
           </p>
         </div>
-        <button className="btn" type="button" onClick={() => setCoverage((value) => !value)}>
-          {coverage ? "Hide coverage" : "Coverage"}
-        </button>
       </div>
       {notice ? <div className="notice">{notice}</div> : null}
       <div className="stats">
@@ -84,11 +84,10 @@ export function MarketView() {
           aria-label="Search the catalog by meaning"
           onChange={(event) => setSearch(event.target.value)}
         />
-        <select
-          className="field"
+        <HTMLSelect
           aria-label="Product"
           value={product}
-          onChange={(event) => setProduct(event.target.value as ProductId | "all")}
+          onChange={(event) => setProduct(event.currentTarget.value as ProductId | "all")}
         >
           <option value="all">All products</option>
           {PRODUCTS.map((id) => (
@@ -96,12 +95,11 @@ export function MarketView() {
               {PRODUCT_LABEL[id]}
             </option>
           ))}
-        </select>
-        <select
-          className="field"
+        </HTMLSelect>
+        <HTMLSelect
           aria-label="Modality"
           value={modality}
-          onChange={(event) => setModality(event.target.value as Modality | "all")}
+          onChange={(event) => setModality(event.currentTarget.value as Modality | "all")}
         >
           <option value="all">All modalities</option>
           {MODALITIES.map((id) => (
@@ -109,12 +107,11 @@ export function MarketView() {
               {MODALITY_LABEL[id]}
             </option>
           ))}
-        </select>
-        <select
-          className="field"
+        </HTMLSelect>
+        <HTMLSelect
           aria-label="Residency"
           value={region}
-          onChange={(event) => setRegion(event.target.value as RegionId | "all")}
+          onChange={(event) => setRegion(event.currentTarget.value as RegionId | "all")}
         >
           <option value="all">All regions</option>
           {REGIONS.map((id) => (
@@ -122,7 +119,7 @@ export function MarketView() {
               {REGION_LABEL[id]}
             </option>
           ))}
-        </select>
+        </HTMLSelect>
       </div>
       <label className="lede">
         Cloud cover at most {cloudMax}%
@@ -135,8 +132,13 @@ export function MarketView() {
           onChange={(event) => setCloudMax(Number(event.target.value))}
         />
       </label>
-      {coverage ? <CoverageMap datasets={rows} onOpen={open} /> : null}
-      <div className="list">
+      {ready ? <LiveMap datasets={rows} onOpen={open} /> : <div className="catalog-map" />}
+      {ready && rows.length > 0 ? (
+        <div className="catalog-table">
+          <CatalogTable rows={rows} onOpen={open} />
+        </div>
+      ) : null}
+      <div className="list catalog-list">
         {rows.length === 0 ? (
           <p className="lede">Nothing matches. Clear the meaning search or raise the cloud limit.</p>
         ) : (
@@ -165,5 +167,48 @@ export function MarketView() {
         )}
       </div>
     </section>
+  );
+}
+
+function LiveMap({ datasets, onOpen }: { datasets: Dataset[]; onOpen: (id: string) => void }) {
+  const [MapView, setMapView] = useState<typeof import("@/components/exchange/catalog-map").CatalogMap | null>(
+    null,
+  );
+  useEffect(() => {
+    let live = true;
+    void import("@/components/exchange/catalog-map").then((mod) => {
+      if (live) setMapView(() => mod.CatalogMap);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!MapView) return <div className="catalog-map">Catalog map is loading.</div>;
+  return <MapView datasets={datasets} onOpen={onOpen} />;
+}
+
+function CatalogTable({ rows, onOpen }: { rows: Dataset[]; onOpen: (id: string) => void }) {
+  return (
+    <Table2 numRows={rows.length} enableRowHeader={false} defaultRowHeight={36}>
+      <Column
+        name="Dataset"
+        cellRenderer={(index) => (
+          <Cell>
+            <button className="btn-quiet" type="button" onClick={() => onOpen(rows[index]?.id ?? "")}>
+              {rows[index]?.title ?? ""}
+            </button>
+          </Cell>
+        )}
+      />
+      <Column name="Product" cellRenderer={(index) => <Cell>{PRODUCT_LABEL[rows[index]?.product ?? "cumulus"]}</Cell>} />
+      <Column name="Owner" cellRenderer={(index) => <Cell>{rows[index]?.ownerName ?? ""}</Cell>} />
+      <Column name="Region" cellRenderer={(index) => <Cell>{(rows[index]?.region ?? "").toUpperCase()}</Cell>} />
+      <Column
+        name="Ask"
+        cellRenderer={(index) => (
+          <Cell>{rows[index]?.status === "listed" ? money(rows[index]?.priceUsd ?? 0) : "Sold"}</Cell>
+        )}
+      />
+    </Table2>
   );
 }

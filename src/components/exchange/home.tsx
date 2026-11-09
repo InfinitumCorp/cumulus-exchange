@@ -39,8 +39,9 @@ export function HomeView() {
         <div>
           <h1 className="pane-title">Cumulus://Cloud</h1>
           <p className="lede">
-            One product. Cumulus://Cloud is Cumulus Drive. Storage, compute, databases and AI
-            infrastructure, with an opt-in license surface for data you choose to offer.
+            Infinitum Corporation®. One product. Cumulus://Cloud is Cumulus Drive. Storage,
+            compute, databases and AI infrastructure for civilian and business cyber workloads,
+            with an opt-in license surface for data you choose to offer.
           </p>
         </div>
       </div>
@@ -68,7 +69,7 @@ export function HomeView() {
             key={surface.id}
             className="card surface"
             type="button"
-            onClick={() => setView(surface.id === "store" ? "drive" : "market")}
+            onClick={() => setView(surface.id === "store" ? "drive" : surface.id === "earn" ? "market" : "market")}
           >
             <span className="mono">{surface.kicker}</span>
             <h3>{surface.title}</h3>
