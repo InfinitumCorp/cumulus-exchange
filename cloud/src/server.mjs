@@ -55,6 +55,8 @@ export async function createServer(options) {
     metrics,
     now: options.now,
     corsOrigins: options.corsOrigins ?? config.corsOrigins,
+    env: options.env,
+    log: options.log,
   });
   return {
     drive,

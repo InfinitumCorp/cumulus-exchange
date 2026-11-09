@@ -5,6 +5,8 @@
  * at deploy time. Tests pass their own fetch implementation.
  */
 
+import { annotatePeer, geoEnabled } from "../../src/geo/v2ray-dat.mjs";
+
 const HOP = new Set([
   "connection",
   "keep-alive",
@@ -160,8 +162,33 @@ function applyCors(headers, origin, allowlist) {
 export async function handleRequest(request, env) {
   const url = new URL(request.url);
   const decision = route(url, env);
-  if (decision.kind === "asset") return serveAsset(request, env);
-  return proxy(request, env, url, decision.path);
+  const response =
+    decision.kind === "asset" ? await serveAsset(request, env) : await proxy(request, env, url, decision.path);
+  if (geoEnabled(env?.INFINITUM_GEO_ENABLED)) noteGeo(request, env);
+  return response;
+}
+
+function noteGeo(request, env) {
+  if (!env?.geoIndex) return;
+  try {
+    const note = annotatePeer(env.geoIndex, {
+      ip: request.headers.get("cf-connecting-ip") || "",
+      host: new URL(request.url).hostname,
+      purpose: request.headers.get("x-cumulus-purpose") || "",
+    });
+    if (!note) return;
+    console.log(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "info",
+        msg: "geo annotation",
+        service: "cumulus-cloud",
+        ...note,
+      }),
+    );
+  } catch {
+    /* annotation must not change the worker response */
+  }
 }
 
 async function serveAsset(request, env) {

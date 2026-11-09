@@ -5,6 +5,7 @@ import { authenticate, requirePurpose } from "./auth.mjs";
 import { createEnvelope, sha256, signShare, verifyShare } from "./crypto.mjs";
 import { log } from "./log.mjs";
 import { corsHeaders } from "./config.mjs";
+import { annotateDrive } from "./geo/hook.mjs";
 
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const NAME = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -354,6 +355,7 @@ export function createHandler(drive, options) {
       }
     } finally {
       metrics?.request("drive", req.method, status);
+      await annotateDrive(req, url, status, options.env ?? process.env, options.log ?? log);
     }
   };
 }

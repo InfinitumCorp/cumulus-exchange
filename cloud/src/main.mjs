@@ -4,6 +4,7 @@ import { createServer, masterKeyFromEnv } from "./server.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
 import { LIMITS } from "./limits.mjs";
 import { loadConfig } from "./config.mjs";
+import { prepareGeo } from "./geo/catalog.mjs";
 
 /**
  * Local process entry. Refuses the live Supabase project unless an explicit
@@ -58,7 +59,14 @@ const app = await createServer({
     loopbackOnly: false,
   },
   limits: LIMITS,
+  env,
 });
+try {
+  await prepareGeo(env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "geo datasets failed verification");
+  process.exit(1);
+}
 
 const port = Number(env.CUMULUS_PORT || 8092);
 const bind = env.CUMULUS_BIND || "127.0.0.1";

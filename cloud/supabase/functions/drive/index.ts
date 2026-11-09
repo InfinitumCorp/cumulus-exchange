@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
+import { annotatePeer, geoEnabled, hashesFromLock, indexFromBuffers } from "../_shared/v2ray-dat.mjs";
 
 /**
  * Cumulus Drive on Supabase Edge Functions.
@@ -57,6 +58,12 @@ const jwks = createRemoteJWKSet(new URL(jwksUrl));
 type Principal = { token: string; cid: string; sub: string; purpose: string; hint: string | null };
 
 Deno.serve(async (req) => {
+  const response = await handleDrive(req);
+  if (geoEnabled(Deno.env.get("INFINITUM_GEO_ENABLED"))) await noteGeo(req);
+  return response;
+});
+
+async function handleDrive(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = functionPath(url.pathname);
   try {
@@ -81,7 +88,71 @@ Deno.serve(async (req) => {
     if (!(error instanceof ApiError)) console.error(JSON.stringify({ msg: "drive error", err: error instanceof Error ? error.message : "unknown" }));
     return json(mapped.status, { error: { code: mapped.code, message: mapped.status === 500 ? "Internal error" : mapped.message } });
   }
-});
+}
+
+let geoLoad: Promise<null | {
+  countryForIp: (ip: string) => string | null;
+  categoriesForDomain: (domain: string) => string[];
+}> | null = null;
+
+async function noteGeo(req: Request) {
+  try {
+    const index = await edgeGeo();
+    const url = new URL(req.url);
+    const note = annotatePeer(index, {
+      ip: req.headers.get("cf-connecting-ip") || req.headers.get("x-real-ip") || "",
+      host: url.hostname,
+      purpose: req.headers.get("x-cumulus-purpose") || "",
+    });
+    if (!note) return;
+    console.log(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "info",
+        msg: "geo annotation",
+        service: "cumulus-cloud",
+        ...note,
+      }),
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        msg: "geo annotation failed",
+        err: error instanceof Error ? error.message : "geo annotation failed",
+      }),
+    );
+  }
+}
+
+function edgeGeo() {
+  if (!geoLoad) {
+    geoLoad = loadEdgeGeo().catch((error) => {
+      console.error(
+        JSON.stringify({
+          msg: "geo annotation failed",
+          err: error instanceof Error ? error.message : "geo annotation failed",
+        }),
+      );
+      return null;
+    });
+  }
+  return geoLoad;
+}
+
+async function loadEdgeGeo() {
+  const dir = Deno.env.get("INFINITUM_GEO_DIR");
+  const lockPath = Deno.env.get("INFINITUM_GEO_LOCK");
+  if (!dir || !lockPath || dir.includes("..") || lockPath.includes("..")) return null;
+  const lock = JSON.parse(await Deno.readTextFile(lockPath));
+  const hashes = hashesFromLock(lock);
+  const root = dir.replace(/[\\/]+$/, "");
+  return indexFromBuffers({
+    geoip: await Deno.readFile(`${root}/geoip.dat`),
+    geosite: await Deno.readFile(`${root}/geosite.dat`),
+    geoipSha256: hashes.geoipSha256,
+    geositeSha256: hashes.geositeSha256,
+  });
+}
 
 function functionPath(pathname: string) {
   for (const prefix of ["/functions/v1/drive", "/drive"]) {

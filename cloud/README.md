@@ -27,6 +27,15 @@ If that swap happens, the free plan is a launch risk:
 
 Other free-plan limits (database size, egress, request rate) were not verified and are not enforced here.
 
+## Geo annotation
+
+`INFINITUM_GEO_ENABLED` defaults off. Drive policy logs stay unchanged until it is set to `1`, `true`, `yes`, or `on`. The datasets are v2fly only:
+
+- `geoip.dat` from `v2fly/geoip` (CC-BY-SA-4.0; DB-IP source data is CC-BY-4.0)
+- `dlc.dat` from `v2fly/domain-list-community`, saved as `geosite.dat` (MIT)
+
+Loyalsoldier and sing-box lists are GPL-3 and the fetch script rejects them. `npm run geo:fetch` checks each official `.sha256sum` against `cloud/geo/geo.lock.json` and against the downloaded bytes, then writes `cloud/var/geo/`. Those binaries are gitignored. A checksum mismatch stops the fetch and does not save either file. With the flag on, the Node process refuses to listen when the files are missing or do not match the lock. The annotation records a country and domain categories on the policy log. It does not allow or deny a request.
+
 ## Run tests
 
 ```sh

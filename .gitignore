@@ -1,5 +1,7 @@
 node_modules
 cloud/var
+# v2fly geoip.dat and geosite.dat. Fetched locally. Never commit the binaries.
+cloud/var/geo/
 .vercel
 .tanstack
 .grok
