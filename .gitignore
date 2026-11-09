@@ -1,4 +1,5 @@
 node_modules
+cloud/var
 .vercel
 .tanstack
 .grok
