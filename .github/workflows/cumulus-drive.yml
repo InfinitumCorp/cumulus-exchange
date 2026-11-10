@@ -16,7 +16,7 @@ permissions:
 jobs:
   test:
     name: drive tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,7 +37,7 @@ jobs:
         run: npm test
   e2e:
     name: live Keycloak and Drive
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -72,7 +72,7 @@ jobs:
         run: docker compose -f cloud/deploy/docker-compose.stack.yml down -v
   supabase:
     name: local Supabase Auth and Drive
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -93,7 +93,7 @@ jobs:
         run: sh scripts/supabase-e2e.sh
   worker:
     name: cloudflare worker
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
