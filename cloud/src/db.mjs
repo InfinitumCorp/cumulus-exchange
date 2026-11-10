@@ -67,8 +67,51 @@ function qualify(sql) {
   return sql
     .replaceAll(/\btenants\b/g, "cumulus.tenants")
     .replaceAll(/\bobjects\b/g, "cumulus.objects")
-    .replaceAll(/\bshares\b/g, "cumulus.shares");
+    .replaceAll(/\bshares\b/g, "cumulus.shares")
+    .replaceAll(/\bversions\b/g, "cumulus.versions")
+    .replaceAll(/\bgrants\b/g, "cumulus.grants")
+    .replaceAll(/\bactivity\b/g, "cumulus.activity");
 }
+
+export const PARITY_DDL = `
+alter table objects add column trashed_at text;
+alter table objects add column starred integer not null default 0;
+alter table objects add column sealed_name text;
+alter table objects add column preview_class text;
+alter table shares add column password_hash text;
+alter table shares add column max_downloads integer;
+alter table shares add column download_count integer not null default 0;
+create table if not exists versions (
+  id text primary key,
+  tenant_id text not null,
+  bucket text not null,
+  object_key text not null,
+  size_bytes integer not null,
+  blob_id text not null,
+  sha256 text not null,
+  plaintext_sha256 text not null,
+  content_type text not null,
+  envelope_json text not null,
+  created_at text not null
+);
+create table if not exists grants (
+  id text primary key,
+  tenant_id text not null,
+  bucket text not null,
+  object_key text not null,
+  grantee_cid text not null,
+  role text not null,
+  created_at text not null,
+  revoked_at text
+);
+create table if not exists activity (
+  id text primary key,
+  tenant_id text not null,
+  action text not null,
+  object_key text,
+  at text not null
+);
+`;
 
 function chainLock() {
   let chain = Promise.resolve();
@@ -99,6 +142,13 @@ function openSqlite(sqlitePath) {
   db.exec("pragma foreign_keys = on");
   db.exec("pragma journal_mode = wal");
   db.exec(SQLITE_DDL);
+  for (const statement of PARITY_DDL.split(";").map((part) => part.trim()).filter(Boolean)) {
+    try {
+      db.exec(statement);
+    } catch (error) {
+      if (!/duplicate column name/i.test(String(error.message))) throw error;
+    }
+  }
   const locked = chainLock();
   const query = (sql, params = []) => {
     const ordered = [];
@@ -135,6 +185,10 @@ async function openPostgres(databaseUrl) {
   const pool = new Pool({ connectionString: databaseUrl });
   const sql = await readFile(migrationPath, "utf8");
   await pool.query(sql);
+  for (const statement of PARITY_DDL.split(";").map((part) => part.trim()).filter(Boolean)) {
+    const sql = /^alter table/i.test(statement) ? statement.replace("add column", "add column if not exists") : statement;
+    await pool.query(qualify(sql));
+  }
   const locked = chainLock();
 
   async function onClient(fn) {
@@ -205,12 +259,22 @@ function repository(query, transaction, close, kind) {
       );
       return objectRow(rows[0]);
     },
-    async listObjects(tenantId, bucket) {
+    async listObjects(tenantId, bucket, view = "active") {
+      const mode = view === "trash" || view === "starred" || view === "photos" ? view : "active";
+      const where =
+        mode === "trash"
+          ? "trashed_at is not null"
+          : mode === "starred"
+            ? "trashed_at is null and starred = 1"
+            : mode === "photos"
+              ? "trashed_at is null and (preview_class = 'image' or content_type like 'image/%')"
+              : "trashed_at is null";
       const rows = await query(
-        "select object_key, size_bytes, content_type, created_at from objects where tenant_id = $1 and bucket = $2 order by object_key",
+        `select object_key, size_bytes, content_type, created_at, starred, trashed_at, sealed_name, preview_class
+         from objects where tenant_id = $1 and bucket = $2 and ${where} order by object_key`,
         [tenantId, bucket],
       );
-      return rows.map((row) => ({ ...row, size_bytes: num(row.size_bytes) }));
+      return rows.map((row) => ({ ...row, size_bytes: num(row.size_bytes), starred: num(row.starred) }));
     },
     async projectUsage() {
       const rows = await query(

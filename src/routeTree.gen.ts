@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiDriveObjectsRouteImport } from './routes/api/drive/objects'
+import { Route as ApiDriveOpsRouteImport } from './routes/api/drive/ops'
 import { Route as ApiDriveSharedRouteImport } from './routes/api/drive/shared'
 import { Route as ApiDriveObjectsIdRouteImport } from './routes/api/drive/objects/$id'
 import { Route as ApiDriveSharesIdRouteImport } from './routes/api/drive/shares/$id'
@@ -30,6 +31,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 const ApiDriveObjectsRoute = ApiDriveObjectsRouteImport.update({
   id: '/api/drive/objects',
   path: '/api/drive/objects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDriveOpsRoute = ApiDriveOpsRouteImport.update({
+  id: '/api/drive/ops',
+  path: '/api/drive/ops',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDriveSharedRoute = ApiDriveSharedRouteImport.update({
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
+  '/api/drive/ops': typeof ApiDriveOpsRoute
   '/api/drive/shared': typeof ApiDriveSharedRoute
   '/api/drive/objects/$id': typeof ApiDriveObjectsIdRouteWithChildren
   '/api/drive/shares/$id': typeof ApiDriveSharesIdRoute
@@ -66,6 +73,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
+  '/api/drive/ops': typeof ApiDriveOpsRoute
   '/api/drive/shared': typeof ApiDriveSharedRoute
   '/api/drive/objects/$id': typeof ApiDriveObjectsIdRouteWithChildren
   '/api/drive/shares/$id': typeof ApiDriveSharesIdRoute
@@ -76,6 +84,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
+  '/api/drive/ops': typeof ApiDriveOpsRoute
   '/api/drive/shared': typeof ApiDriveSharedRoute
   '/api/drive/objects/$id': typeof ApiDriveObjectsIdRouteWithChildren
   '/api/drive/shares/$id': typeof ApiDriveSharesIdRoute
@@ -87,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/auth/$'
     | '/api/drive/objects'
+    | '/api/drive/ops'
     | '/api/drive/shared'
     | '/api/drive/objects/$id'
     | '/api/drive/shares/$id'
@@ -96,6 +106,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/auth/$'
     | '/api/drive/objects'
+    | '/api/drive/ops'
     | '/api/drive/shared'
     | '/api/drive/objects/$id'
     | '/api/drive/shares/$id'
@@ -105,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/auth/$'
     | '/api/drive/objects'
+    | '/api/drive/ops'
     | '/api/drive/shared'
     | '/api/drive/objects/$id'
     | '/api/drive/shares/$id'
@@ -115,6 +127,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiDriveObjectsRoute: typeof ApiDriveObjectsRouteWithChildren
+  ApiDriveOpsRoute: typeof ApiDriveOpsRoute
   ApiDriveSharedRoute: typeof ApiDriveSharedRoute
   ApiDriveSharesIdRoute: typeof ApiDriveSharesIdRoute
 }
@@ -140,6 +153,13 @@ declare module '@tanstack/react-router' {
       path: '/api/drive/objects'
       fullPath: '/api/drive/objects'
       preLoaderRoute: typeof ApiDriveObjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/drive/ops': {
+      id: '/api/drive/ops'
+      path: '/api/drive/ops'
+      fullPath: '/api/drive/ops'
+      preLoaderRoute: typeof ApiDriveOpsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/drive/shared': {
@@ -200,6 +220,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiDriveObjectsRoute: ApiDriveObjectsRouteWithChildren,
+  ApiDriveOpsRoute: ApiDriveOpsRoute,
   ApiDriveSharedRoute: ApiDriveSharedRoute,
   ApiDriveSharesIdRoute: ApiDriveSharesIdRoute,
 }

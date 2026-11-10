@@ -85,6 +85,23 @@ function toSql(run: Run): Sql {
   return sql;
 }
 
+async function loadMigrationSources(): Promise<Record<string, string>> {
+  // A direct `import.meta.glob(...)` is what the bundler can inline. Reading the
+  // property and calling it is what node tests and Vite's module runner see.
+  // The runner's function throws unless the call was static, so fall back to
+  // the migration files on disk. Those files are the same source.
+  try {
+    const glob = (import.meta as ImportMeta & { glob?: (pattern: string, opts: object) => Record<string, string> }).glob;
+    if (typeof glob === "function") {
+      const loaded = glob("/migrations/*.sql", { query: "?raw", import: "default", eager: true });
+      if (loaded && typeof loaded === "object") return loaded;
+    }
+  } catch {
+    // Vite module runner: import.meta.glob throws when it is not a static call.
+  }
+  return readMigrationFiles();
+}
+
 async function readMigrationFiles(): Promise<Record<string, string>> {
   const { readdir, readFile } = await import("node:fs/promises");
   const { dirname, join } = await import("node:path");
@@ -156,11 +173,7 @@ async function createPgliteSql(): Promise<Sql> {
   // passes serialized on a global chain so concurrent callers never
   // double-apply.
   const migrate = async (): Promise<void> => {
-    const glob = (import.meta as ImportMeta & { glob?: (pattern: string, opts: object) => Record<string, string> }).glob;
-    const migrations =
-      typeof glob === "function"
-        ? glob("/migrations/*.sql", { query: "?raw", import: "default", eager: true })
-        : await readMigrationFiles();
+    const migrations = await loadMigrationSources();
     const doneRows = await pg.query<{ name: string }>(
       "select name from _migrations",
     );

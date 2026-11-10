@@ -1,7 +1,9 @@
 import { auth, authConfigured } from "@/lib/auth/server";
 import { DEV_USER_ID } from "@/lib/auth/verify.server";
 import { DriveError } from "@/lib/drive/errors";
-import { sanitizeDisplayName } from "@/lib/drive/magic";
+import { acceptDisplayName, sanitizeDisplayName } from "@/lib/drive/magic";
+import { isPreviewClass } from "@/lib/drive/preview-class";
+import { listFolders } from "@/lib/drive/parity";
 import {
   createShare,
   deleteObject,
@@ -12,6 +14,7 @@ import {
   readShared,
   revokeShare,
   uploadObject,
+  type ListFilter,
 } from "@/lib/drive/service";
 
 function json(status: number, body: unknown): Response {
@@ -97,12 +100,18 @@ export async function postObject(request: Request): Promise<Response> {
   try {
     const owner = await userId(request);
     const bytes = await readBounded(request);
+    const preview = request.headers.get("x-preview-class")?.trim() ?? "";
+    const folder = request.headers.get("x-folder-id")?.trim() ?? "";
+    const versionOf = request.headers.get("x-version-of")?.trim() ?? "";
     const stored = await uploadObject({
       userId: owner,
       bytes,
       mediaType: request.headers.get("content-type")?.split(";")[0]?.trim() ?? "",
-      displayName: sanitizeDisplayName(request.headers.get("x-display-name")),
+      displayName: acceptDisplayName(request.headers.get("x-display-name")),
       idempotencyKey: request.headers.get("idempotency-key")?.trim() ?? "",
+      folderId: folder || null,
+      versionOf: versionOf || null,
+      previewClass: preview && isPreviewClass(preview) ? preview : null,
     });
     return json(201, stored);
   } catch (err) {
@@ -113,8 +122,26 @@ export async function postObject(request: Request): Promise<Response> {
 export async function getObjects(request: Request): Promise<Response> {
   try {
     const owner = await userId(request);
-    const [objects, quota] = await Promise.all([listObjects(owner), quotaFor(owner)]);
-    return json(200, { objects, quota });
+    const url = new URL(request.url);
+    const view = url.searchParams.get("view") ?? "";
+    const filter: ListFilter = {
+      trash: view === "trash",
+      starred: view === "starred",
+      photos: view === "photos",
+      rooted: url.searchParams.has("folder"),
+      folderId: url.searchParams.get("folder") || null,
+      query: url.searchParams.get("q") ?? undefined,
+    };
+    const [objects, folders, quota] = await Promise.all([
+      listObjects(owner, filter),
+      listFolders(owner, {
+        trash: view === "trash",
+        rooted: url.searchParams.has("folder"),
+            parentId: url.searchParams.get("folder") || null,
+      }),
+      quotaFor(owner),
+    ]);
+    return json(200, { objects, folders, quota });
   } catch (err) {
     return fail(err);
   }
@@ -143,12 +170,19 @@ export async function removeObject(request: Request, objectId: string): Promise<
 export async function postShare(request: Request, objectId: string): Promise<Response> {
   try {
     const owner = await userId(request);
-    const body = (await request.json()) as { consent?: unknown; expiresInSeconds?: unknown };
+    const body = (await request.json()) as {
+      consent?: unknown;
+      expiresInSeconds?: unknown;
+      password?: unknown;
+      maxDownloads?: unknown;
+    };
     const created = await createShare({
       userId: owner,
       objectId,
       consent: body.consent === true,
       expiresInSeconds: Number(body.expiresInSeconds),
+      password: typeof body.password === "string" ? body.password : undefined,
+      maxDownloads: body.maxDownloads == null ? null : Number(body.maxDownloads),
     });
     return json(201, created);
   } catch (err) {
@@ -181,9 +215,11 @@ export async function getShared(request: Request): Promise<Response> {
     const header = request.headers.get("authorization") ?? "";
     const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
     if (!token) throw new DriveError(401, "unauthorized");
-    const file = await readShared(token);
+    const file = await readShared(token, request.headers.get("x-share-password") ?? undefined);
     return attachment(file.meta.displayName, file.meta.mediaType, file.bytes);
   } catch (err) {
     return fail(err);
   }
 }
+
+export { userId as requireDriveUser };

@@ -39,7 +39,7 @@ Optional limits:
 
 `POST /api/drive/objects/:id/shares` with `{ "consent": true, "expiresInSeconds": 3600 }` returns a token once. The database stores only its SHA-256. `GET /api/drive/shared` with `Authorization: Bearer <token>` streams that one file after checking the hash, expiry, and revocation. `DELETE /api/drive/shares/:id` revokes it. The next request fails. A download that already started can finish. This is not an S3 presigned URL, which would stay valid until it expired.
 
-Allowed types are checked from the bytes: jpeg, png, gif, webp, pdf, plain text, csv, and json.
+Allowed types are checked from the bytes: jpeg, png, gif, webp, pdf, plain text, csv, json, mp4, webm, and `application/vnd.cumulus.sealed`. A sealed object must start with the `CMLS` header. The console produces that header in the browser. The key is not sent. Folders, trash, stars, versions, share passwords, download limits, Cumulus://ID grants, chunked upload, and the audit read API are in `migrations/0003_drive_parity.sql`. The checklist is `docs/proton-parity.md`.
 
 Quota counts reserved bytes for an upload that has not finished, and stored bytes after it has. Two uploads that together exceed the quota cannot both commit. A failed write releases the reservation. Rows left `pending` or `deleting` for `CUMULUS_DRIVE_STALE_MS` are reconciled on the next Drive call: a pending row with bytes on disk becomes stored; a pending row without bytes is aborted; a deleting row deletes the file and releases quota.
 
