@@ -34,6 +34,15 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket.
 
+   After those migrations, add `cumulus` to the project's Exposed schemas (Settings → API). Keep any schemas already listed (`public`, `graphql_public`, and `eon` on this project). Equivalent SQL:
+
+   ```sql
+   alter role authenticator set pgrst.db_schemas = 'public, graphql_public, eon, cumulus';
+   notify pgrst, 'reload config';
+   ```
+
+   Pin the same list in the dashboard so a later settings save does not drop `cumulus`. The Drive function sends `Accept-Profile: cumulus`; without this, PostgREST returns `PGRST106` (`Invalid schema: cumulus`) and authenticated Drive calls fail.
+
 2. **Bucket.** Confirm `storage.buckets` has `id = cumulus-drive`, `public = false`, and `file_size_limit = 50000000`. Confirm `storage.objects` has no policy for `anon`, `authenticated`, or `public`. Do not add one. Blobs go through the S3 protocol as the service key, under `tenants/<tenantId>/<blobId>`.
 
 3. **Hook.** In the Auth settings, the custom access token hook is disabled. The function from step 1's older migration is dropped by step 2. Leave it dropped.

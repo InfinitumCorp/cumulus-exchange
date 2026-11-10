@@ -31,28 +31,34 @@ class ApiError extends Error {
   }
 }
 
+function hostedSupabaseUrl() {
+  return (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
+}
+
 function refuseLive(value: string) {
   const textValue = value.toLowerCase();
   const hit = ["supabase.co", "supabase.com", "ivqiskeziohbbtkcvlun", "pooler.supabase"].find((needle) => textValue.includes(needle));
   if (!hit) return;
-  if (Deno.env.get("CUMULUS_ALLOW_SUPABASE") !== "I-understand-this-touches-prod") {
-    throw new Error(`Refusing live Supabase target (${hit})`);
-  }
+  if (Deno.env.get("CUMULUS_ALLOW_SUPABASE") === "I-understand-this-touches-prod") return;
+  // Hosted Edge Functions inject SUPABASE_URL; that is this project's runtime, not a local accident.
+  if (hostedSupabaseUrl()) return;
+  throw new Error(`Refusing live Supabase target (${hit})`);
 }
 
-const restUrl = (Deno.env.get("CUMULUS_REST_URL") ?? "http://kong:8000/rest/v1").replace(/\/+$/, "");
+const hosted = hostedSupabaseUrl();
+const restUrl = (Deno.env.get("CUMULUS_REST_URL") ?? (hosted ? `${hosted}/rest/v1` : "http://kong:8000/rest/v1")).replace(/\/+$/, "");
 const s3Endpoint = Deno.env.get("CUMULUS_S3_ENDPOINT") ?? "";
-const jwksUrl = Deno.env.get("CUMULUS_JWKS_URL") ?? "";
-const issuer = Deno.env.get("CUMULUS_JWT_ISSUER") ?? "";
-const anonKey = Deno.env.get("CUMULUS_ANON_KEY") ?? "";
-const serviceKey = Deno.env.get("CUMULUS_SERVICE_ROLE_KEY") ?? "";
+const jwksUrl = Deno.env.get("CUMULUS_JWKS_URL") ?? (hosted ? `${hosted}/auth/v1/.well-known/jwks.json` : "");
+const issuer = Deno.env.get("CUMULUS_JWT_ISSUER") ?? (hosted ? `${hosted}/auth/v1` : "");
+const anonKey = Deno.env.get("CUMULUS_ANON_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const serviceKey = Deno.env.get("CUMULUS_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const accessKey = Deno.env.get("CUMULUS_S3_ACCESS_KEY") ?? "";
 const secretKey = Deno.env.get("CUMULUS_S3_SECRET_KEY") ?? "";
 const region = Deno.env.get("CUMULUS_S3_REGION") ?? "local";
 const shareSecret = Deno.env.get("CUMULUS_SHARE_SECRET") ?? "";
-const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://cloud.cumuluscloud.app").replace(/\/+$/, "");
+const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://drive.cumuluscloud.app").replace(/\/+$/, "");
 for (const value of [restUrl, s3Endpoint, jwksUrl, issuer]) refuseLive(value);
-const jwks = createRemoteJWKSet(new URL(jwksUrl));
+const jwks = jwksUrl ? createRemoteJWKSet(new URL(jwksUrl)) : null;
 
 type Principal = { token: string; cid: string; sub: string; purpose: string; hint: string | null };
 
@@ -124,6 +130,7 @@ async function verify(req: Request): Promise<Principal> {
   const header = req.headers.get("authorization") ?? "";
   if (!header.startsWith("Bearer ")) throw new ApiError(401, "AccessDenied", "Missing bearer token");
   const token = header.slice(7).trim();
+  if (!jwks || !issuer || !anonKey) throw new ApiError(500, "Config", "Drive auth is not configured");
   let payload;
   try {
     payload = (await jwtVerify(token, jwks, { issuer, algorithms: ["ES256", "RS256"] })).payload;
