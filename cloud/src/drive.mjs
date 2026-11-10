@@ -5,6 +5,7 @@ import { authenticate, requirePurpose } from "./auth.mjs";
 import { createEnvelope, sha256, signShare, verifyShare } from "./crypto.mjs";
 import { log } from "./log.mjs";
 import { corsHeaders } from "./config.mjs";
+import { applyGeoHook, requestHint } from "../../src/lib/geo/hook.mjs";
 
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const NAME = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -346,7 +347,9 @@ export function createHandler(drive, options) {
       status = error instanceof HttpError ? error.status : 500;
       if (error instanceof HttpError && error.quota) metrics?.quotaDenied();
       if (!(error instanceof HttpError) || error.status === 401) metrics?.authFailure();
-      if (!(error instanceof HttpError)) log("error", "drive error", { err: error.message });
+      if (!(error instanceof HttpError)) {
+        log("error", "drive error", applyGeoHook({ err: error.message }, requestHint(req), options.geo));
+      }
       if (!res.headersSent) {
         const code = error instanceof HttpError ? error.code : "InternalError";
         const message = error instanceof HttpError ? error.message : "Internal error";

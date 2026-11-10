@@ -443,6 +443,10 @@
     align-items: center;
   }
 
+  .actions .bp6-control {
+    margin: 0;
+  }
+
   .lede input[type="range"] {
     display: block;
     width: 100%;
