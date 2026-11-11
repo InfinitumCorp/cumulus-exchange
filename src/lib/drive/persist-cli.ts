@@ -3,23 +3,15 @@ import { auth } from "@/lib/auth/server";
 import { getSql } from "@/lib/db";
 import { getObject, getShared } from "@/lib/drive/http";
 import { closeDrive } from "@/lib/drive/service";
+import { testSessionCookie } from "@/lib/drive/test-session";
 
 const [role, id, outFile] = process.argv.slice(2);
 const email = process.env.CUMULUS_TEST_EMAIL ?? "";
-const password = process.env.CUMULUS_TEST_PASSWORD ?? "";
 const token = process.env.CUMULUS_TEST_SHARE_TOKEN ?? "";
 
 await getSql();
 if (role === "read") {
-  const signed = await auth.api.signInEmail({
-    body: { email, password },
-    asResponse: true,
-    headers: new Headers({ origin: "http://localhost:8080" }),
-  });
-  const cookie = signed.headers
-    .getSetCookie()
-    .map((line) => line.split(";")[0])
-    .join("; ");
+  const cookie = await testSessionCookie(auth, email, email);
   const response = await getObject(new Request("http://localhost:8080/api/drive/objects/" + id, { headers: { cookie } }), id);
   if (!response.ok) {
     console.error(await response.text());

@@ -20,7 +20,12 @@ if (env.CUMULUS_S3_ENDPOINT) assertNotLiveSupabase(env.CUMULUS_S3_ENDPOINT);
 if (env.DATABASE_URL) assertNotLiveSupabase(env.DATABASE_URL);
 
 const config = loadConfig(env);
-const authMode = env.CUMULUS_AUTH_MODE || "keycloak";
+// People sign in with Cumulus ID. "keycloak" and "supabase" remain for deployments that opt in.
+const authMode = env.CUMULUS_AUTH_MODE || "cid";
+if (!["cid", "keycloak", "supabase"].includes(authMode)) {
+  console.error(`Unknown CUMULUS_AUTH_MODE ${authMode}. Use cid, keycloak or supabase.`);
+  process.exit(1);
+}
 if (authMode === "supabase") {
   if (!env.CUMULUS_SUPABASE_URL) {
     console.error("CUMULUS_SUPABASE_URL is required when CUMULUS_AUTH_MODE=supabase.");

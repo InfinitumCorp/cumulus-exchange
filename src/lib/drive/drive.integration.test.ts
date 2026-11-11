@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const blobRoot = await mkdtemp(path.join(tmpdir(), "cumulus-blob-"));
 const pgliteDir = await mkdtemp(path.join(tmpdir(), "cumulus-pg-"));
-const password = "test-password-1";
 const emailA = "demo.ada@cumuluscloud.app";
 const emailB = "demo.bea@cumuluscloud.app";
 
@@ -23,13 +22,6 @@ process.env.CUMULUS_DRIVE_STALE_MS = "900000";
 delete process.env.DATABASE_URL;
 delete process.env.VERCEL;
 delete process.env.GROK_PROJECT_ID;
-
-function cookieHeader(response: Response): string {
-  return response.headers
-    .getSetCookie()
-    .map((line) => line.split(";")[0])
-    .join("; ");
-}
 
 function textFile(body: string, name: string, key = randomUUID()) {
   return new Request("http://localhost:8080/api/drive/objects", {
@@ -86,23 +78,12 @@ test("filesystem Drive persists, isolates tenants, and enforces quota", async ()
     uploadObject,
   } = await import("@/lib/drive/service");
   const http = await import("@/lib/drive/http");
+  const { testSessionCookie } = await import("@/lib/drive/test-session");
   await getSql();
 
-  const headers = new Headers({ origin: "http://localhost:8080" });
-  const signA = await auth.api.signUpEmail({
-    body: { email: emailA, password, name: "Ada" },
-    asResponse: true,
-    headers,
-  });
-  const signB = await auth.api.signUpEmail({
-    body: { email: emailB, password, name: "Bea" },
-    asResponse: true,
-    headers,
-  });
-  assert.equal(signA.status, 200);
-  assert.equal(signB.status, 200);
-  const cookieA = cookieHeader(signA);
-  const cookieB = cookieHeader(signB);
+  // People sign in with Cumulus ID; the test stands in for its callback.
+  const cookieA = await testSessionCookie(auth, emailA, "Ada");
+  const cookieB = await testSessionCookie(auth, emailB, "Bea");
 
   const anon = await http.postObject(textFile("hello", "note.txt"));
   assert.equal(anon.status, 401);
@@ -322,7 +303,6 @@ test("filesystem Drive persists, isolates tenants, and enforces quota", async ()
   await closeDrive();
   await runChild("read", roundtripId, outFile, {
     CUMULUS_TEST_EMAIL: emailA,
-    CUMULUS_TEST_PASSWORD: password,
   });
   const round = await readFile(outFile, "utf8");
   assert.equal(round, eightHundred);
