@@ -9,7 +9,7 @@ import { corsHeaders } from "./config.mjs";
 
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const NAME = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
-const CID = /^cid_[a-z0-9_]{1,64}$/;
+const CID = /^cid_[a-z0-9_-]{1,64}$/;
 
 function num(value) {
   const n = typeof value === "bigint" ? Number(value) : Number(value);

@@ -86,6 +86,7 @@ export async function fixture(t, limits) {
     shareSecret,
     issuer: ISSUER,
     audience: AUDIENCE,
+    authMode: "keycloak",
     jwks: keys.jwks,
     limits,
     now: () => new Date(clock.ms),

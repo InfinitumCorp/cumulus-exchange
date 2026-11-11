@@ -22,13 +22,6 @@ delete process.env.DATABASE_URL;
 delete process.env.VERCEL;
 delete process.env.GROK_PROJECT_ID;
 
-function cookieHeader(response: Response): string {
-  return response.headers
-    .getSetCookie()
-    .map((line) => line.split(";")[0])
-    .join("; ");
-}
-
 function authed(url: string, cookie: string, method = "GET", body?: BodyInit, headers: Record<string, string> = {}) {
   return new Request(url, {
     method,
@@ -44,21 +37,10 @@ test("folders, trash, versions, shares, grants, chunks, and sealed files", async
   const ops = await import("@/lib/drive/http-parity");
   const { closeDrive } = await import("@/lib/drive/service");
   await getSql();
-  const headers = new Headers({ origin: "http://localhost:8080" });
-  const signA = await auth.api.signUpEmail({
-    body: { email: emailA, password, name: "Cara" },
-    asResponse: true,
-    headers,
-  });
-  const signB = await auth.api.signUpEmail({
-    body: { email: emailB, password, name: "Dina" },
-    asResponse: true,
-    headers,
-  });
-  assert.equal(signA.status, 200);
-  assert.equal(signB.status, 200);
-  const cookieA = cookieHeader(signA);
-  const cookieB = cookieHeader(signB);
+  // Email sign-up is off (Cumulus ID only), so mint test sessions the same way the Drive integration test does.
+  const { testSessionCookie } = await import("@/lib/drive/test-session");
+  const cookieA = await testSessionCookie(auth, emailA, "Cara");
+  const cookieB = await testSessionCookie(auth, emailB, "Dina");
 
   const folder = await ops.driveOps(
     authed("http://localhost:8080/api/drive/ops", cookieA, "POST", JSON.stringify({ op: "folder", name: "Photos" })),

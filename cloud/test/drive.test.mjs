@@ -196,6 +196,7 @@ test("upload, download, share, delete, quotas, isolation, and restore", async (t
     shareSecret: fx.shareSecret,
     issuer: ISSUER,
     audience: AUDIENCE,
+    authMode: "keycloak",
     jwks: fx.keys.jwks,
     limits: { projectBytes: 1_000, maxFileBytes: 100, defaultTenantBytes: 1_000, defaultTenantObjects: 10 },
     now: () => new Date(fx.clock.ms),
@@ -270,6 +271,7 @@ test("upload, download, share, delete, quotas, isolation, and restore", async (t
     shareSecret: fx.shareSecret,
     issuer: ISSUER,
     audience: AUDIENCE,
+    authMode: "keycloak",
     jwks: fx.keys.jwks,
     limits: { projectBytes: 1_000, maxFileBytes: 100, defaultTenantBytes: 1_000, defaultTenantObjects: 10 },
   });

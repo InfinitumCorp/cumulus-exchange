@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { HTMLTable } from "@blueprintjs/core";
+import { SIGN_IN_PROVIDERS, signIn } from "@/lib/auth/client";
 import {
   DRIVE_API,
   DRIVE_BUCKET,
@@ -386,23 +387,7 @@ interface ShareRow {
   token?: string;
 }
 
-async function authCall(path: string, email: string, password: string, name: string) {
-  const response = await fetch(path, {
-    method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, name }),
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? "Sign-in failed");
-  }
-}
-
 function SessionDriveView() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [notice, setNotice] = useState("");
@@ -410,6 +395,7 @@ function SessionDriveView() {
   const [hours, setHours] = useState(24);
   const [shares, setShares] = useState<Record<string, ShareRow[]>>({});
   const [driveKey, setDriveKey] = useState<CryptoKey | null>(null);
+  const [drivePassphrase, setDrivePassphrase] = useState("");
   const [quotaText, setQuotaText] = useState("");
   const [listView, setListView] = useState("files");
 
@@ -445,15 +431,20 @@ function SessionDriveView() {
     setNotice("");
   }
 
-  async function enter(kind: "sign-in" | "sign-up") {
-    try {
-      await authCall(`/api/auth/${kind}/email`, email, password, name || email);
-      const next = password ? await deriveDriveKey(password, email) : null;
-      setDriveKey(next);
-      await refresh(next);
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Sign-in failed");
-    }
+  // Back from Cumulus ID the session cookie is already set, so look for files at once.
+  useEffect(() => {
+    void refresh().catch(() => setSignedIn(false));
+  }, []);
+
+  // Cumulus ID never gives this page a password, so sealing uses a separate Drive passphrase
+  // (the same scheme as the access-link view): the key is derived on this device and never sent.
+  async function unlockDrive() {
+    if (!drivePassphrase) return;
+    const next = await deriveDriveKey(drivePassphrase, "cumulus-drive");
+    setDriveKey(next);
+    setDrivePassphrase("");
+    await refresh(next);
+    setNotice("New uploads are sealed on this device before they leave it.");
   }
 
   async function upload(file: File) {
@@ -559,21 +550,21 @@ function SessionDriveView() {
       {notice ? <div className="notice">{notice}</div> : null}
       {!signedIn ? (
         <div className="card">
-          <div className="filters">
-            <input className="field" aria-label="Name" placeholder="Name" value={name} onChange={(event) => setName(event.target.value)} />
-            <input className="field" aria-label="Email" placeholder="demo.you@cumuluscloud.app" value={email} onChange={(event) => setEmail(event.target.value)} />
-            <input className="field" aria-label="Password" placeholder="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </div>
           <div className="actions">
-            <button className="btn-primary" type="button" onClick={() => enter("sign-in")}>
-              Sign in
-            </button>
-            <button className="btn" type="button" onClick={() => enter("sign-up")}>
-              Create account
-            </button>
-            <button className="btn" type="button" onClick={() => refresh()}>
-              Load my files
-            </button>
+            {SIGN_IN_PROVIDERS.map((p) => (
+              <button
+                key={p.providerId}
+                className={p.create ? "btn" : "btn-primary"}
+                type="button"
+                onClick={() => {
+                  void signIn(p.providerId, { callbackURL: "/" }).catch((err: unknown) =>
+                    setNotice(err instanceof Error ? err.message : "Sign-in failed"),
+                  );
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
         </div>
       ) : (
@@ -584,6 +575,8 @@ function SessionDriveView() {
                 {item[0].toUpperCase() + item.slice(1)}
               </button>
             ))}
+            <input className="field" aria-label="Drive passphrase" placeholder="Drive passphrase" type="password" value={drivePassphrase} onChange={(event) => setDrivePassphrase(event.target.value)} />
+            <button className="btn" type="button" onClick={() => void unlockDrive()}>{driveKey ? "Unlocked" : "Unlock"}</button>
             <label className="btn">
               Upload
               <input
