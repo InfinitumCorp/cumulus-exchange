@@ -3,10 +3,11 @@
  * created here. `https://cumuluscloud.app` is the only Cumulus origin this
  * process trusts, and only as that exact string.
  *
- * Cumulus://ID is not a second session in this repository. Sign-in is this
- * app's Better Auth session (`/api/auth/*`). Nothing here accepts a token,
- * cookie, or mailbox from another Infinitum product. The browser demo ledger
- * is a separate hardcoded label and is not that session.
+ * People sign in with Cumulus ID (id.cumuluscloud.app) through this app's
+ * Better Auth (`/api/auth/*`, see `cumulus-id.ts`); the session cookie is this
+ * origin's own. Nothing here accepts a cookie or mailbox from another Infinitum
+ * product. The browser demo ledger is a separate hardcoded label and is not
+ * that session.
  */
 export const CANONICAL_ORIGIN = "https://cumuluscloud.app";
 export const CANONICAL_HOST = "cumuluscloud.app";
