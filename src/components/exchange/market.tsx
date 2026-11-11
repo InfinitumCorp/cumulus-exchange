@@ -14,6 +14,8 @@ import {
 import { scoreOf, useExchange, visibleDatasets } from "@/lib/exchange/store";
 import { startConjure, followConjure } from "@/lib/exchange/conjure";
 import { askScalvs } from "@/lib/exchange/scalvs";
+import { askSearch } from "@/lib/exchange/search";
+import { searchAsText } from "@/lib/exchange/search-core";
 import { mentionIn } from "@/lib/exchange/mentions";
 
 const PRODUCTS = Object.keys(PRODUCT_LABEL) as ProductId[];
@@ -52,6 +54,17 @@ export function MarketView() {
     const mention = mentionIn(search);
     if (!mention || forecast?.busy) return;
     const context = rows.slice(0, 40).map((d) => `- ${d.title} (${PRODUCT_LABEL[d.product]}, ${MODALITY_LABEL[d.modality]}, ${d.region.toUpperCase()}, ${d.status === "listed" ? money(d.priceUsd) : "sold"})`).join("\n");
+    // "@search <question>": Infinitum Search reads the web and answers with numbered sources.
+    if (mention === "search") {
+      setForecast({ text: "Searching the web…", busy: true });
+      try {
+        const result = await askSearch({ data: { text: search } });
+        setForecast({ text: result.error || (result.mention ? searchAsText(result) : "Write a question after @search."), busy: false });
+      } catch (error) {
+        setForecast({ text: error instanceof Error ? error.message : "Search is unavailable right now.", busy: false });
+      }
+      return;
+    }
     if (mention === "scalvs") {
       setForecast({ text: "SCALVS is working…", busy: true });
       try {
