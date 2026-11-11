@@ -1,7 +1,7 @@
 import { createMetrics } from "./metrics.mjs";
 import { openDatabase } from "./db.mjs";
 import { createFilesystemDriver, createS3Driver } from "./storage.mjs";
-import { createKeycloakVerifier, createSupabaseVerifier } from "./auth.mjs";
+import { createCidVerifier, createKeycloakVerifier, createSupabaseVerifier } from "./auth.mjs";
 import { createDrive, createHandler } from "./drive.mjs";
 import { parseMasterKey } from "./crypto.mjs";
 import { assertNotLiveSupabase } from "./guard.mjs";
@@ -25,10 +25,12 @@ export async function createServer(options) {
   }
   const config = options.config ?? loadConfig(options.env ?? {});
   const metrics = options.metrics ?? createMetrics();
-  const authMode = options.authMode ?? "keycloak";
+  const authMode = options.authMode ?? "cid";
   const verifier =
     options.verifier ??
-    (authMode === "supabase"
+    (authMode === "cid"
+      ? createCidVerifier({ issuer: options.cidIssuer ?? config.cidIssuer })
+      : authMode === "supabase"
       ? createSupabaseVerifier({
           issuer: options.issuer,
           jwksUrl: options.jwksUrl,
