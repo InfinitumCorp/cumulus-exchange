@@ -13,8 +13,8 @@ import {
 } from "@/lib/exchange/model";
 import { scoreOf, useExchange, visibleDatasets } from "@/lib/exchange/store";
 import { startConjure, followConjure } from "@/lib/exchange/conjure";
-
-const MENTION = /(^|[^\w@./])@conjure(?![\w-]|\.[a-z])/i;
+import { askScalvs } from "@/lib/exchange/scalvs";
+import { mentionIn } from "@/lib/exchange/mentions";
 
 const PRODUCTS = Object.keys(PRODUCT_LABEL) as ProductId[];
 const MODALITIES = Object.keys(MODALITY_LABEL) as Modality[];
@@ -47,9 +47,21 @@ export function MarketView() {
   } as Parameters<typeof visibleDatasets>[0]);
   const listed = datasets.filter((dataset) => dataset.status === "listed").length;
   // "@conjure <question>" in the search box: a live Conjure forecast over the datasets in view.
+  // "@scalvs <task>" (or "@scalus"): the SCALVS agent (on OpenClaw) answers over the same datasets.
   async function conjure() {
-    if (!MENTION.test(search) || forecast?.busy) return;
+    const mention = mentionIn(search);
+    if (!mention || forecast?.busy) return;
     const context = rows.slice(0, 40).map((d) => `- ${d.title} (${PRODUCT_LABEL[d.product]}, ${MODALITY_LABEL[d.modality]}, ${d.region.toUpperCase()}, ${d.status === "listed" ? money(d.priceUsd) : "sold"})`).join("\n");
+    if (mention === "scalvs") {
+      setForecast({ text: "SCALVS is working…", busy: true });
+      try {
+        const result = await askScalvs({ data: { text: search, context: context ? `Datasets in view:\n${context}` : "" } });
+        setForecast({ text: result.error || (result.mention ? result.text ?? "" : "Write a task after @scalvs."), busy: false });
+      } catch (error) {
+        setForecast({ text: error instanceof Error ? error.message : "SCALVS is unavailable right now.", busy: false });
+      }
+      return;
+    }
     setForecast({ text: "Conjure™ is starting a forecast…", busy: true });
     try {
       let result = await startConjure({ data: { text: search, context: context ? `Datasets in view:\n${context}` : "" } });
