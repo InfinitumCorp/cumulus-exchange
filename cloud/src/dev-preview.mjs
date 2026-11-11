@@ -24,6 +24,9 @@ export async function createDevPreview(dir) {
     masterKey: secrets.masterKey,
     bootstrapToken: secrets.bootstrap,
     shareSecret: secrets.share,
+    // Local preview only: it signs its own short-lived token with a key kept on disk.
+    // Deployed servers default to Cumulus ID (see main.mjs).
+    authMode: "keycloak",
     issuer: config.issuer,
     audience: config.audience,
     jwks: secrets.jwks,

@@ -55,6 +55,7 @@ services:
       CUMULUS_SHARE_SECRET: stack-share-secret-01
       CUMULUS_KEYCLOAK_ISSUER: http://127.0.0.1:8088/realms/cumulus
       CUMULUS_KEYCLOAK_AUDIENCE: https://id.cumuluscloud.app
+      CUMULUS_AUTH_MODE: keycloak
       CUMULUS_KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/cumulus/protocol/openid-connect/certs
     ports:
       - "127.0.0.1:8092:8092"

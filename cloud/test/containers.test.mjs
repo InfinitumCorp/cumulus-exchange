@@ -25,6 +25,7 @@ test("postgres quotas and seaweedfs S3 stub stay on loopback", async (t) => {
     shareSecret,
     issuer: ISSUER,
     audience: AUDIENCE,
+    authMode: "keycloak",
     jwks: keys.jwks,
     limits: { projectBytes: 500, maxFileBytes: 100, defaultTenantBytes: 500, defaultTenantObjects: 10 },
   });
@@ -59,6 +60,7 @@ test("postgres quotas and seaweedfs S3 stub stay on loopback", async (t) => {
     shareSecret,
     issuer: ISSUER,
     audience: AUDIENCE,
+    authMode: "keycloak",
     jwks: keys.jwks,
     limits: { projectBytes: 500, maxFileBytes: 100, defaultTenantBytes: 500, defaultTenantObjects: 10 },
   });
@@ -97,6 +99,7 @@ test("postgres quotas and seaweedfs S3 stub stay on loopback", async (t) => {
     shareSecret,
     issuer: ISSUER,
     audience: AUDIENCE,
+    authMode: "keycloak",
     jwks: keys.jwks,
     limits: { projectBytes: 1000, maxFileBytes: 100, defaultTenantBytes: 1000, defaultTenantObjects: 10 },
   });

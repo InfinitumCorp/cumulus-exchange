@@ -11,7 +11,7 @@ Local storage service for Cumulus Drive. It is **not deployed** and it does **no
 | `CUMULUS_CLOUD_HOST` | `cloud.cumuluscloud.app` |
 | `CUMULUS_MAIL_HOST` | `mail.cumuluscloud.app` |
 
-The ID host is the Keycloak issuer (`https://id.cumuluscloud.app/realms/cumulus`), the default audience (`https://id.cumuluscloud.app`), and the JWKS URL under that issuer. `cloud/keycloak/cumulus-realm.json` is an import file for that realm (CID claim, purpose roles, PKCE clients for Cloud and Mail). It contains no users and no client secret, and it has not been imported. Share links use `https://cloud.cumuluscloud.app`. CORS allows exactly `https://` plus each of those three hosts. Override with `CUMULUS_CORS_ORIGINS` as a comma-separated list of origins. A `*` entry is rejected. Mail stays out of this service; only the hostname is recorded.
+People sign in with Cumulus ID. The default auth mode, `CUMULUS_AUTH_MODE=cid`, takes the bearer token a person got from Cumulus ID (`https://id.cumuluscloud.app`, or a mirror named by `CID_ISSUER`, for example one that loads in Russia without a VPN) and asks the issuer who it belongs to (`GET /api/id/userinfo`). The verified `cid` owns that Drive and gets `drive.read`, `drive.write` and `drive.share`. Answers are cached for 30 seconds per token. `CUMULUS_AUTH_MODE=keycloak` is the older opt-in mode: the ID host is then the Keycloak issuer (`https://id.cumuluscloud.app/realms/cumulus`), the default audience (`https://id.cumuluscloud.app`), and the JWKS URL under that issuer. `cloud/keycloak/cumulus-realm.json` is an import file for that realm (CID claim, purpose roles, PKCE clients for Cloud and Mail). It contains no users and no client secret, and it has not been imported. Share links use `https://cloud.cumuluscloud.app`. CORS allows exactly `https://` plus each of those three hosts. Override with `CUMULUS_CORS_ORIGINS` as a comma-separated list of origins. A `*` entry is rejected. Mail stays out of this service; only the hostname is recorded.
 
 The primary driver stores ciphertext on the local filesystem (tenant-scoped paths, atomic writes, SHA-256 checksums). Metadata and quotas are in SQLite by default, or local Postgres when `DATABASE_URL` is set. An S3-compatible driver (`@aws-sdk/client-s3`) implements the same `put` / `get` / `delete` interface so R2, B2, S3, or Supabase Storage can be selected later with configuration. Tests exercise that driver only against a local SeaweedFS container (Apache-2.0). MinIO is AGPL and is not a dependency.
 
@@ -37,11 +37,11 @@ npm test
 
 `npm test` starts local Postgres and SeaweedFS with `cloud/deploy/docker-compose.yml` for the container tests. The filesystem and SQLite tests do not need those containers, but the S3 stub test does.
 
-`cloud/deploy/docker-compose.stack.yml` starts a real Keycloak (realm `cumulus`), Postgres, and the Drive process. CI runs `test/e2e-stack.test.mjs` against that stack with `CUMULUS_E2E=1`. Those tests log in through Keycloak with PKCE. They do not use a demo session. The stack is local only and is not a deploy.
+`cloud/deploy/docker-compose.stack.yml` starts a real Keycloak (realm `cumulus`), Postgres, and the Drive process. CI runs `test/e2e-stack.test.mjs` against that stack with `CUMULUS_E2E=1`. Those tests log in through Keycloak with PKCE. They do not use a demo session. The stack is local only and is not a deploy, and it sets `CUMULUS_AUTH_MODE=keycloak` explicitly.
 
 ## Supabase mode (local CLI only)
 
-`CUMULUS_AUTH_MODE=supabase` on the Node process keeps Keycloak as the default and adds a second verifier. That Node verifier still reads `cid` from `app_metadata.cid`. It is not the free launch path. The live project ref is still refused.
+`CUMULUS_AUTH_MODE=supabase` on the Node process swaps in a Supabase verifier instead of Cumulus ID. That Node verifier still reads `cid` from `app_metadata.cid`. It is not the free launch path. The live project ref is still refused.
 
 The free path is the Edge Function in `cloud/supabase/functions/drive` behind the Worker in `cloud/worker`. The function checks Supabase Auth JWTs against the project JWKS (`ES256` or `RS256`) and loads `cid` from `cumulus.identities` where `user_id` is the verified `sub`. It does not read a cid claim from the token.
 
@@ -82,6 +82,6 @@ Do not point these at the live project unless that swap has been explicitly appr
 - `CUMULUS_PUBLIC_BASE_URL` (optional; derived from the cloud host)
 - `CUMULUS_CORS_ORIGINS` (optional exact origins; no wildcard)
 
-A CID string is not a credential. Callers need a JWT bound to a tenant, plus `x-cumulus-purpose` (`drive.read`, `drive.write`, or `drive.share`). Keycloak mode requires an RS256 token whose `cid` claim is present. The Edge Function requires an Auth token whose `sub` has a row in `cumulus.identities`. The Node Supabase verifier, which is not the Worker path, still requires `app_metadata.cid`.
+A CID string is not a credential. Callers need a JWT bound to a tenant, plus `x-cumulus-purpose` (`drive.read`, `drive.write`, or `drive.share`). Cumulus ID mode (the default) requires a token Cumulus ID still accepts at `/api/id/userinfo` with a `cid` in its profile. Keycloak mode requires an RS256 token whose `cid` claim is present. The Edge Function requires an Auth token whose `sub` has a row in `cumulus.identities`. The Node Supabase verifier, which is not the Worker path, still requires `app_metadata.cid`.
 
 The live Supabase hostname and project ref are refused unless `CUMULUS_ALLOW_SUPABASE=I-understand-this-touches-prod`. That variable is not set anywhere in this repository.
