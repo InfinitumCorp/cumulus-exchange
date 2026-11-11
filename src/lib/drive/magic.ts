@@ -7,6 +7,9 @@ const ALLOWED = [
   "text/plain",
   "text/csv",
   "application/json",
+  "video/mp4",
+  "video/webm",
+  "application/vnd.cumulus.sealed",
 ] as const;
 
 export type AllowedType = (typeof ALLOWED)[number];
@@ -49,6 +52,11 @@ export function magicMatches(mediaType: AllowedType, bytes: Uint8Array): boolean
       return ascii(bytes, 4) === "RIFF" && ascii(bytes.slice(8), 4) === "WEBP";
     }
     if (mediaType === "application/pdf") return ascii(bytes, 5) === "%PDF-";
+    if (mediaType === "video/mp4") return bytes.length > 12 && ascii(bytes.slice(4), 4) === "ftyp";
+    if (mediaType === "video/webm") return startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3]);
+    if (mediaType === "application/vnd.cumulus.sealed") {
+      return ascii(bytes, 4) === "CMLS" && bytes[4] === 1 && bytes.length >= 33;
+    }
     if (mediaType === "text/plain" || mediaType === "text/csv") {
       decodeText(bytes);
       return true;
@@ -63,6 +71,15 @@ export function magicMatches(mediaType: AllowedType, bytes: Uint8Array): boolean
 function isForbiddenNameChar(char: string): boolean {
   const code = char.codePointAt(0) ?? 0;
   return code <= 31 || code === 127 || char === "\\" || char === "/";
+}
+
+const SEALED_NAME = /^cmls1\.[A-Za-z0-9_-]{16,400}$/;
+
+/** A client-sealed label is stored as opaque text. Plain labels are still cleaned. */
+export function acceptDisplayName(raw: string | null): string {
+  const trimmed = (raw ?? "").trim();
+  if (SEALED_NAME.test(trimmed)) return trimmed;
+  return sanitizeDisplayName(trimmed);
 }
 
 /** Private display label. Never used as a filesystem path. */

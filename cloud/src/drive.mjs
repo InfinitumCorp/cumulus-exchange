@@ -3,6 +3,7 @@ import { HttpError } from "./errors.mjs";
 import { LIMITS } from "./limits.mjs";
 import { authenticate, requirePurpose } from "./auth.mjs";
 import { createEnvelope, sha256, signShare, verifyShare } from "./crypto.mjs";
+import { hashSharePassword, readGranted, runParity, sharePasswordMatches } from "./parity.mjs";
 import { log } from "./log.mjs";
 import { corsHeaders } from "./config.mjs";
 
@@ -66,7 +67,7 @@ export function createDrive(options) {
   const now = options.now ?? (() => new Date());
   const metrics = options.metrics;
 
-  async function putObject(tenant, bucket, objectKey, plaintext, contentType) {
+  async function putObject(tenant, bucket, objectKey, plaintext, contentType, extras = {}) {
     assertBucket(bucket);
     assertKey(objectKey);
     if (plaintext.length > limits.maxFileBytes) {
@@ -84,13 +85,23 @@ export function createDrive(options) {
           [tenant.id, bucket, objectKey],
         );
         const existing = existingRows[0];
+        const keep = Boolean(existing && extras.keepVersion);
+        if (keep) {
+          const versionRows = await q(
+            "select count(*) as n from versions where tenant_id = $1 and bucket = $2 and object_key = $3",
+            [tenant.id, bucket, objectKey],
+          );
+          if (num(versionRows[0].n) >= 20) {
+            throw new HttpError(409, "VersionLimit", "Version history is capped at 20");
+          }
+        }
         const tenantRows = await q("select * from tenants where id = $1", [tenant.id]);
         const current = tenantRows[0];
         const projectRows = await q(
           "select coalesce(sum(used_bytes), 0) as used_bytes from tenants",
         );
         const oldSize = existing ? num(existing.size_bytes) : 0;
-        const deltaBytes = plaintext.length - oldSize;
+        const deltaBytes = keep ? plaintext.length : plaintext.length - oldSize;
         const deltaObjects = existing ? 0 : 1;
         const usedBytes = num(current.used_bytes) + deltaBytes;
         const usedObjects = num(current.used_objects) + deltaObjects;
@@ -101,7 +112,28 @@ export function createDrive(options) {
           throw quotaError("Project storage cap exceeded");
         }
         if (existing) {
-          previousBlob = existing.blob_id;
+          if (!keep) previousBlob = existing.blob_id;
+          if (keep) {
+            await q(
+              `insert into versions (
+                id, tenant_id, bucket, object_key, size_bytes, blob_id, sha256, plaintext_sha256,
+                content_type, envelope_json, created_at
+              ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [
+                newId("ver"),
+                tenant.id,
+                bucket,
+                objectKey,
+                oldSize,
+                existing.blob_id,
+                existing.sha256,
+                existing.plaintext_sha256,
+                existing.content_type,
+                existing.envelope_json,
+                existing.created_at,
+              ],
+            );
+          }
           await q(
             `update objects set size_bytes = $1, blob_id = $2, sha256 = $3, plaintext_sha256 = $4,
              content_type = $5, envelope_json = $6, created_at = $7
@@ -150,6 +182,18 @@ export function createDrive(options) {
       throw error;
     }
     if (previousBlob) await storage.delete(tenant.id, previousBlob).catch(() => undefined);
+    if (extras.sealedName || extras.previewClass) {
+      await db.query(
+        "update objects set sealed_name = $4, preview_class = $5 where tenant_id = $1 and bucket = $2 and object_key = $3",
+        [tenant.id, bucket, objectKey, extras.sealedName || null, extras.previewClass || null],
+      );
+    }
+    await db.query("insert into activity (id, tenant_id, action, object_key, at) values ($1, $2, 'put', $3, $4)", [
+      newId("act"),
+      tenant.id,
+      objectKey,
+      now().toISOString(),
+    ]);
     return { size: plaintext.length, sha256: sha256(plaintext) };
   }
 
@@ -198,7 +242,7 @@ export function createDrive(options) {
     if (blobId) await storage.delete(tenant.id, blobId).catch(() => undefined);
   }
 
-  async function createShare(tenant, bucket, objectKey, ttlSeconds) {
+  async function createShare(tenant, bucket, objectKey, ttlSeconds, extra = {}) {
     assertBucket(bucket);
     assertKey(objectKey);
     const row = await db.getObject(tenant.id, bucket, objectKey);
@@ -209,10 +253,15 @@ export function createDrive(options) {
     const id = newId("shr");
     const exp = Math.floor(now().getTime() / 1000) + ttlSeconds;
     const createdAt = now().toISOString();
+    const passwordHash = extra.password ? hashSharePassword(extra.password) : null;
+    const maxDownloads = extra.maxDownloads ?? null;
+    if (maxDownloads != null && (!Number.isInteger(maxDownloads) || maxDownloads < 1 || maxDownloads > 10000)) {
+      throw new HttpError(400, "InvalidLimit", "Download limit is not valid");
+    }
     await db.query(
-      `insert into shares (id, tenant_id, bucket, object_key, expires_at, revoked_at, created_at)
-       values ($1, $2, $3, $4, $5, null, $6)`,
-      [id, tenant.id, bucket, objectKey, new Date(exp * 1000).toISOString(), createdAt],
+      `insert into shares (id, tenant_id, bucket, object_key, expires_at, revoked_at, created_at, password_hash, max_downloads)
+       values ($1, $2, $3, $4, $5, null, $6, $7, $8)`,
+      [id, tenant.id, bucket, objectKey, new Date(exp * 1000).toISOString(), createdAt, passwordHash, maxDownloads],
     );
     const sig = signShare(options.shareSecret, id, exp);
     const base = String(options.publicBaseUrl || "").replace(/\/+$/, "");
@@ -220,6 +269,8 @@ export function createDrive(options) {
     return {
       shareId: id,
       expiresAt: new Date(exp * 1000).toISOString(),
+      hasPassword: Boolean(passwordHash),
+      maxDownloads,
       url: `${base}${path}`,
     };
   }
@@ -230,7 +281,7 @@ export function createDrive(options) {
     await db.query("update shares set revoked_at = $2 where id = $1", [shareId, now().toISOString()]);
   }
 
-  async function openShare(shareId, exp, sig) {
+  async function openShare(shareId, exp, sig, password) {
     const expNumber = Number(exp);
     if (!shareId || !Number.isInteger(expNumber) || !sig) {
       throw new HttpError(403, "AccessDenied", "Share link is not valid");
@@ -247,6 +298,13 @@ export function createDrive(options) {
     if (Date.parse(share.expires_at) !== expNumber * 1000) {
       throw new HttpError(403, "AccessDenied", "Share link is not valid");
     }
+    if (share.password_hash && !sharePasswordMatches(password, share.password_hash)) {
+      throw new HttpError(401, "PasswordRequired", "Share password is required");
+    }
+    if (share.max_downloads != null && num(share.download_count) >= num(share.max_downloads)) {
+      throw new HttpError(403, "DownloadLimit", "Share download limit was reached");
+    }
+    await db.query("update shares set download_count = download_count + 1 where id = $1", [share.id]);
     return readObject(share.tenant_id, share.bucket, share.object_key);
   }
 
@@ -396,7 +454,13 @@ async function route(drive, options, req, res, url) {
     return 200;
   }
   if (req.method === "GET" && url.pathname === "/v1/shared") {
-    const body = await drive.openShare(url.searchParams.get("shareId"), url.searchParams.get("exp"), url.searchParams.get("sig"));
+    const passwordHeader = req.headers["x-share-password"];
+    const body = await drive.openShare(
+      url.searchParams.get("shareId"),
+      url.searchParams.get("exp"),
+      url.searchParams.get("sig"),
+      url.searchParams.get("password") || (Array.isArray(passwordHeader) ? passwordHeader[0] : passwordHeader),
+    );
     send(res, 200, body.plaintext, { "content-type": body.contentType });
     return 200;
   }
@@ -456,7 +520,10 @@ async function route(drive, options, req, res, url) {
     requirePurpose(principal, purposeValue, "share.create");
     const tenant = await tenantFromCid(drive.db, principal.cid);
     const payload = JSON.parse((await readBody(req, 1_048_576)).toString("utf8") || "{}");
-    const share = await drive.createShare(tenant, payload.bucket, payload.key, payload.ttlSeconds);
+    const share = await drive.createShare(tenant, payload.bucket, payload.key, payload.ttlSeconds, {
+      password: payload.password,
+      maxDownloads: payload.maxDownloads,
+    });
     sendJson(res, 201, share);
     return 201;
   }
@@ -465,8 +532,21 @@ async function route(drive, options, req, res, url) {
     requirePurpose(principal, purposeValue, "share.revoke");
     const tenant = await tenantFromCid(drive.db, principal.cid);
     await drive.revokeShare(tenant, decodeURIComponent(url.pathname.slice("/v1/shares/".length)));
-    send(res, 204, Buffer.alloc(0));
+    sendJson(res, 204, Buffer.alloc(0));
     return 204;
+  }
+
+  if (url.pathname === "/v1/parity") {
+    const reading = req.method === "GET";
+    if (!reading && req.method !== "POST") throw new HttpError(405, "MethodNotAllowed", "Method is not allowed");
+    requirePurpose(principal, purposeValue, reading ? "parity.read" : "parity.write");
+    const tenant = await tenantFromCid(drive.db, principal.cid);
+    const payload = reading
+      ? Object.fromEntries(url.searchParams)
+      : JSON.parse((await readBody(req, 1_048_576)).toString("utf8") || "{}");
+    const result = await runParity(drive, tenant, payload);
+    sendJson(res, result.status, result.body);
+    return result.status;
   }
 
   const located = objectPath(url.pathname);
@@ -476,12 +556,19 @@ async function route(drive, options, req, res, url) {
   if (req.method === "GET" && located.key === null) {
     requirePurpose(principal, purposeValue, "object.list");
     assertBucket(located.bucket);
-    sendJson(res, 200, { objects: await drive.db.listObjects(tenant.id, located.bucket) });
+    sendJson(res, 200, { objects: await drive.db.listObjects(tenant.id, located.bucket, url.searchParams.get("view") || "active") });
     return 200;
   }
   if (req.method === "GET" && located.key !== null) {
     requirePurpose(principal, purposeValue, "object.get");
-    const body = await drive.readObject(tenant.id, located.bucket, located.key);
+    let body;
+    try {
+      body = await drive.readObject(tenant.id, located.bucket, located.key);
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 404) throw error;
+      body = await readGranted(drive, principal.cid, located.bucket, located.key);
+      if (!body) throw error;
+    }
     send(res, 200, body.plaintext, { "content-type": body.contentType, etag: `"${sha256(body.plaintext)}"` });
     return 200;
   }
@@ -489,12 +576,19 @@ async function route(drive, options, req, res, url) {
     requirePurpose(principal, purposeValue, "object.put");
     const plaintext = await readBody(req, drive.limits.maxFileBytes);
     const contentType = req.headers["content-type"] || "application/octet-stream";
+    const sealedName = req.headers["x-cumulus-sealed-name"];
+    const previewClass = req.headers["x-cumulus-preview-class"];
     const saved = await drive.putObject(
       tenant,
       located.bucket,
       located.key,
       plaintext,
       Array.isArray(contentType) ? contentType[0] : contentType,
+      {
+        keepVersion: req.headers["x-cumulus-keep-version"] === "1",
+        sealedName: Array.isArray(sealedName) ? sealedName[0] : sealedName,
+        previewClass: Array.isArray(previewClass) ? previewClass[0] : previewClass,
+      },
     );
     sendJson(res, 200, saved);
     return 200;

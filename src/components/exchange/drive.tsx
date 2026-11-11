@@ -8,9 +8,20 @@ import {
   driveObjectUrl,
   previewShareHref,
 } from "@/lib/exchange/drive-client";
+import { nameMatches, previewClassFor } from "@/lib/drive/preview-class";
+import { deriveDriveKey, openContent, openName, SEAL_MEDIA_TYPE, sealContent, sealName, toArrayBuffer } from "@/lib/drive/seal";
 
-type ObjectRow = { object_key: string; size_bytes: number; content_type: string };
+type ObjectRow = {
+  object_key: string;
+  size_bytes: number;
+  content_type: string;
+  sealed_name?: string | null;
+  preview_class?: string | null;
+  starred?: number;
+};
 type Usage = { usedBytes: number; maxBytes: number; maxFileBytes: number };
+type Listed = ObjectRow & { label: string };
+type Preview = { name: string; url: string; kind: string; text?: string };
 
 /**
  * Cloud-plane preview when `/api/drive/dev-session` answers.
@@ -48,15 +59,29 @@ export function DriveView() {
 
 function CloudDriveView() {
   const [token, setToken] = useState<string | null>(null);
-  const [objects, setObjects] = useState<ObjectRow[]>([]);
+  const [objects, setObjects] = useState<Listed[]>([]);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [notice, setNotice] = useState("Opening your Drive.");
   const [shareUrl, setShareUrl] = useState("");
+  const [view, setView] = useState("files");
+  const [prefix, setPrefix] = useState("");
+  const [query, setQuery] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [key, setKey] = useState<CryptoKey | null>(null);
+  const [sharePassword, setSharePassword] = useState("");
+  const [maxDownloads, setMaxDownloads] = useState("");
+  const [invite, setInvite] = useState("");
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [extra, setExtra] = useState("");
+  const [note, setNote] = useState("");
+  const [showNote, setShowNote] = useState(false);
+  const [folderName, setFolderName] = useState("");
 
-  const load = useCallback(async (access: string) => {
+  const load = useCallback(async (access: string, nextView: string, driveKey: CryptoKey | null) => {
     const headers = driveHeaders(access, "drive.read");
+    const listUrl = `${driveObjectUrl(DRIVE_BUCKET)}?view=${encodeURIComponent(nextView === "photos" || nextView === "starred" || nextView === "trash" ? nextView : "active")}`;
     const [list, meter] = await Promise.all([
-      fetch(driveObjectUrl(DRIVE_BUCKET), { headers }),
+      fetch(listUrl, { headers }),
       fetch(`${DRIVE_API}/v1/usage`, { headers }),
     ]);
     if (!list.ok || !meter.ok) {
@@ -65,9 +90,13 @@ function CloudDriveView() {
     }
     const listed = (await list.json()) as { objects: ObjectRow[] };
     const measured = (await meter.json()) as Usage;
-    setObjects(listed.objects);
+    const labeled = await Promise.all(listed.objects.map(async (object) => ({
+      ...object,
+      label: await visibleName(object, driveKey),
+    })));
+    setObjects(labeled);
     setUsage(measured);
-    setNotice(listed.objects.length === 0 ? "This folder is empty." : "");
+    setNotice(labeled.length === 0 ? "This folder is empty." : "");
   }, []);
 
   useEffect(() => {
@@ -78,60 +107,95 @@ function CloudDriveView() {
         const body = (await response.json()) as { token: string };
         if (gone) return;
         setToken(body.token);
-        await load(body.token);
+        await load(body.token, "files", null);
       })
       .catch(() => {
-        if (!gone) {
-          setNotice("Drive is available in the local preview. It is not turned on for this server.");
-        }
+        if (!gone) setNotice("Drive is available in the local preview. It is not turned on for this server.");
       });
     return () => {
       gone = true;
     };
   }, [load]);
 
-  async function upload(file: File | undefined) {
-    if (!file || !token) return;
-    setNotice(`Uploading ${file.name}.`);
-    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, file.name), {
-      method: "PUT",
-      headers: {
-        ...driveHeaders(token, "drive.write"),
-        "content-type": file.type || "application/octet-stream",
-      },
-      body: await file.arrayBuffer(),
-    });
-    setNotice(response.ok ? `${file.name} is stored.` : "That upload was refused.");
-    if (response.ok) await load(token);
+  async function unlock() {
+    if (!passphrase) return;
+    const next = await deriveDriveKey(passphrase, "cumulus-drive");
+    setKey(next);
+    setPassphrase("");
+    if (token) await load(token, view, next);
+    setNotice("New uploads are sealed on this device before they leave it.");
   }
 
-  async function download(key: string) {
-    if (!token) return;
-    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, key), {
-      headers: driveHeaders(token, "drive.read"),
-    });
-    if (!response.ok) {
+  async function upload(file: File | undefined, folder = prefix) {
+    if (!file || !token) return;
+    setNotice(`Uploading ${file.name}.`);
+    const raw = new Uint8Array(await file.arrayBuffer());
+    const previewClass = previewClassFor(file.type || "application/octet-stream", file.name);
+    let body: Uint8Array = raw;
+    let media = file.type || "application/octet-stream";
+    let objectKey = `${folder}${file.name}`;
+    const headers: Record<string, string> = {
+      ...driveHeaders(token, "drive.write"),
+      "x-cumulus-keep-version": "1",
+      "x-cumulus-preview-class": previewClass,
+    };
+    if (key) {
+      body = await sealContent(key, raw);
+      media = SEAL_MEDIA_TYPE;
+      objectKey = `${folder}files/${crypto.randomUUID()}`;
+      headers["x-cumulus-sealed-name"] = await sealName(key, `${folder}${file.name}`);
+    }
+    headers["content-type"] = media;
+    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, objectKey), { method: "PUT", headers, body: new Blob([toArrayBuffer(body)]) });
+    setNotice(response.ok ? `${file.name} is stored.` : "That upload was refused.");
+    if (response.ok) await load(token, view, key);
+  }
+
+  async function downloadBytes(objectKey: string) {
+    if (!token) return null;
+    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, objectKey), { headers: driveHeaders(token, "drive.read") });
+    if (!response.ok) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const type = response.headers.get("content-type") || "application/octet-stream";
+    if (key && (type === SEAL_MEDIA_TYPE || (bytes[0] === 0x43 && bytes[1] === 0x4d))) {
+      return { bytes: await openContent(key, bytes), type: "application/octet-stream" };
+    }
+    return { bytes, type };
+  }
+
+  async function download(object: Listed) {
+    const file = await downloadBytes(object.object_key);
+    if (!file) {
       setNotice("Download failed.");
       return;
     }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = key;
-    link.click();
-    URL.revokeObjectURL(url);
+    saveBlob(file.bytes, object.label, file.type);
   }
 
-  async function share(key: string) {
+  async function openPreview(object: Listed) {
+    const file = await downloadBytes(object.object_key);
+    if (!file) {
+      setNotice("Preview failed.");
+      return;
+    }
+    if (preview) URL.revokeObjectURL(preview.url);
+    const kind = object.preview_class || previewClassFor(file.type, object.label);
+    const text = kind === "text" || kind === "note" ? new TextDecoder().decode(file.bytes) : "";
+    setPreview({ name: object.label, url: URL.createObjectURL(new Blob([toArrayBuffer(file.bytes)], { type: file.type })), kind, text });
+  }
+
+  async function share(objectKey: string) {
     if (!token) return;
     const response = await fetch(`${DRIVE_API}/v1/shares`, {
       method: "POST",
-      headers: {
-        ...driveHeaders(token, "drive.share"),
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ bucket: DRIVE_BUCKET, key, ttlSeconds: 900 }),
+      headers: { ...driveHeaders(token, "drive.share"), "content-type": "application/json" },
+      body: JSON.stringify({
+        bucket: DRIVE_BUCKET,
+        key: objectKey,
+        ttlSeconds: 900,
+        password: sharePassword || undefined,
+        maxDownloads: maxDownloads ? Number(maxDownloads) : undefined,
+      }),
     });
     if (!response.ok) {
       setNotice("Could not create a share link.");
@@ -142,20 +206,42 @@ function CloudDriveView() {
     setNotice("Share link expires in 15 minutes.");
   }
 
-  async function remove(key: string) {
-    if (!token) return;
-    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, key), {
-      method: "DELETE",
-      headers: driveHeaders(token, "drive.write"),
+  async function parity(op: string, fields: Record<string, unknown>, purpose: "drive.read" | "drive.write" = "drive.write") {
+    if (!token) return null;
+    const response = await fetch(`${DRIVE_API}/v1/parity`, {
+      method: "POST",
+      headers: { ...driveHeaders(token, purpose), "content-type": "application/json" },
+      body: JSON.stringify({ op, bucket: DRIVE_BUCKET, ...fields }),
     });
-    setNotice(response.ok ? `${key} was deleted.` : "Delete failed.");
-    if (response.ok) await load(token);
+    if (!response.ok) {
+      setNotice("That Drive action was refused.");
+      return null;
+    }
+    return response.json();
   }
 
+  async function showActivity() {
+    if (!token) return;
+    const response = await fetch(`${DRIVE_API}/v1/parity?op=activity`, { headers: driveHeaders(token, "drive.read") });
+    const security = await fetch(`${DRIVE_API}/v1/parity?op=security`, { headers: driveHeaders(token, "drive.read") });
+    const events = response.ok ? ((await response.json()) as { events: { action: string; object_key: string | null; at: string }[] }).events : [];
+    const report = security.ok ? ((await security.json()) as { reason?: string }) : {};
+    setExtra([report.reason, ...events.slice(0, 8).map((event) => `${event.at} ${event.action} ${event.object_key ?? ""}`)].filter(Boolean).join(" · "));
+  }
+
+  const shown = filterListing(objects, prefix, query, view);
   const localShare = shareUrl ? previewShareHref(shareUrl) : "";
 
   return (
-    <section className="pane">
+    <section
+      className="pane"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const file = event.dataTransfer.files?.[0];
+        if (file) void upload(file);
+      }}
+    >
       <div className="pane-head">
         <div>
           <h1 className="pane-title">Drive</h1>
@@ -169,21 +255,68 @@ function CloudDriveView() {
       <div className="actions">
         <label className="btn-primary">
           Upload
+          <input type="file" hidden onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
+        </label>
+        <label className="btn">
+          Folder
           <input
             type="file"
             hidden
+            multiple
+            ref={(node) => { if (node) node.setAttribute("webkitdirectory", ""); }}
             onChange={(event) => {
-              void upload(event.target.files?.[0]);
+              const files = [...(event.target.files ?? [])];
+              void (async () => {
+                for (const file of files) {
+                  const relative = file.webkitRelativePath || file.name;
+                  const slash = relative.lastIndexOf("/");
+                  const folder = slash >= 0 ? relative.slice(0, slash + 1) : "";
+                  await upload(file, prefix + folder);
+                }
+              })();
               event.target.value = "";
             }}
           />
         </label>
+        <button className="btn" type="button" onClick={() => { if (!folderName.trim()) return; void upload(new File(["{}"], ".keep", { type: "application/json" }), `${prefix}${folderName.trim()}/`); setFolderName(""); }}>
+          New folder
+        </button>
+        <button className="btn" type="button" onClick={() => setShowNote((value) => !value)}>Note</button>
+        {(["files", "photos", "starred", "trash"] as const).map((item) => (
+          <button key={item} className="btn" type="button" onClick={() => { setView(item); if (token) void load(token, item, key); }}>
+            {item[0].toUpperCase() + item.slice(1)}
+          </button>
+        ))}
+        <button className="btn" type="button" onClick={() => void showActivity()}>Activity</button>
+        {prefix ? <button className="btn" type="button" onClick={() => setPrefix(prefix.replace(/[^/]+\/$/, ""))}>Up</button> : null}
+      </div>
+      <div className="filters">
+        <input className="search" aria-label="Search files" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input className="field" aria-label="Drive passphrase" placeholder="Drive passphrase" type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
+        <button className="btn" type="button" onClick={() => void unlock()}>Unlock</button>
+        <input className="field" aria-label="Share password" placeholder="Share password" value={sharePassword} onChange={(event) => setSharePassword(event.target.value)} />
+        <input className="field" aria-label="Download limit" placeholder="Download limit" value={maxDownloads} onChange={(event) => setMaxDownloads(event.target.value)} />
+        <input className="field" aria-label="Folder name" placeholder="Folder name" value={folderName} onChange={(event) => setFolderName(event.target.value)} />
+        <input className="field" aria-label="Cumulus ID" placeholder="cid_name" value={invite} onChange={(event) => setInvite(event.target.value)} />
       </div>
       {notice ? <p className="lede">{notice}</p> : null}
-      {shareUrl ? (
-        <p className="mono">
-          <a href={localShare}>{localShare}</a>
-        </p>
+      {prefix ? <p className="mono">{prefix}</p> : null}
+      {shareUrl ? <p className="mono"><a href={localShare}>{localShare}</a></p> : null}
+      {extra ? <p className="lede">{extra}</p> : null}
+      {showNote ? (
+        <div className="card">
+          <textarea className="field" aria-label="Note" placeholder="Encrypted note" value={note} onChange={(event) => setNote(event.target.value)} />
+          <button className="btn" type="button" onClick={() => void upload(new File([note], `note-${Date.now()}.note`, { type: "text/plain" }))}>Save note</button>
+        </div>
+      ) : null}
+      {preview ? (
+        <div className="card">
+          <p className="row-title">{preview.name}</p>
+          {preview.kind === "image" ? <img alt="" src={preview.url} /> : null}
+          {preview.kind === "pdf" ? <iframe title={preview.name} src={preview.url} /> : null}
+          {preview.kind === "video" ? <video controls src={preview.url} /> : null}
+          {preview.kind === "text" || preview.kind === "note" ? <pre className="mono">{preview.text}</pre> : null}
+        </div>
       ) : null}
       <HTMLTable compact striped className="drive-table">
         <thead>
@@ -195,22 +328,39 @@ function CloudDriveView() {
           </tr>
         </thead>
         <tbody>
-          {objects.map((object) => (
+          {shown.folders.map((folder) => (
+            <tr key={folder}>
+              <td>{folder}/</td>
+              <td />
+              <td>folder</td>
+              <td><button className="btn" type="button" onClick={() => setPrefix(`${prefix}${folder}/`)}>Open</button></td>
+            </tr>
+          ))}
+          {shown.files.map((object) => (
             <tr key={object.object_key}>
-              <td>{object.object_key}</td>
+              <td>{object.label}</td>
               <td>{formatBytes(object.size_bytes)}</td>
-              <td>{object.content_type}</td>
+              <td>{object.preview_class || object.content_type}</td>
               <td>
                 <div className="actions">
-                  <button className="btn" type="button" onClick={() => void download(object.object_key)}>
-                    Download
-                  </button>
-                  <button className="btn" type="button" onClick={() => void share(object.object_key)}>
-                    Share
-                  </button>
-                  <button className="btn" type="button" onClick={() => void remove(object.object_key)}>
-                    Delete
-                  </button>
+                  <button className="btn" type="button" onClick={() => void download(object)}>Download</button>
+                  <button className="btn" type="button" onClick={() => void openPreview(object)}>Preview</button>
+                  <button className="btn" type="button" onClick={() => void share(object.object_key)}>Share</button>
+                  <button className="btn" type="button" onClick={() => { void (async () => { await parity("star", { key: object.object_key, starred: object.starred ? 0 : 1 }); if (token) await load(token, view, key); })(); }}>Star</button>
+                  <button className="btn" type="button" onClick={() => { void (async () => { await parity(view === "trash" ? "restore" : "trash", { key: object.object_key }); if (token) await load(token, view, key); })(); }}>{view === "trash" ? "Restore" : "Trash"}</button>
+                  <button className="btn" type="button" onClick={() => void parity("invite", { key: object.object_key, cid: invite, role: "viewer" })}>Invite</button>
+                  <button className="btn" type="button" onClick={() => { void share(object.object_key); setNotice("Mail delivery is deferred. The share link is the handoff."); }}>Mail</button>
+                  <button className="btn" type="button" onClick={async () => {
+                    const body = await parity("versions", { key: object.object_key }, "drive.write");
+                    const count = (body as { versions?: unknown[] } | null)?.versions?.length ?? 0;
+                    setNotice(count ? `${count} earlier version${count === 1 ? "" : "s"}.` : "No earlier version.");
+                  }}>History</button>
+                  <button className="btn" type="button" onClick={async () => {
+                    if (!token) return;
+                    const response = await fetch(driveObjectUrl(DRIVE_BUCKET, object.object_key), { method: "DELETE", headers: driveHeaders(token, "drive.write") });
+                    setNotice(response.ok ? `${object.label} was deleted.` : "Delete failed.");
+                    if (response.ok) await load(token, view, key);
+                  }}>Delete</button>
                 </div>
               </td>
             </tr>
@@ -220,6 +370,7 @@ function CloudDriveView() {
     </section>
   );
 }
+
 
 interface DriveFile {
   id: string;
@@ -243,17 +394,40 @@ function SessionDriveView() {
   const [consent, setConsent] = useState(false);
   const [hours, setHours] = useState(24);
   const [shares, setShares] = useState<Record<string, ShareRow[]>>({});
+  const [driveKey, setDriveKey] = useState<CryptoKey | null>(null);
+  const [drivePassphrase, setDrivePassphrase] = useState("");
+  const [quotaText, setQuotaText] = useState("");
+  const [listView, setListView] = useState("files");
 
-  async function refresh() {
-    const response = await fetch("/api/drive/objects", { credentials: "include" });
-    const body = (await response.json()) as { objects?: DriveFile[]; message?: string; error?: string };
+  async function refresh(next: CryptoKey | null = driveKey, nextView = listView) {
+    const query = nextView === "files" ? "" : `?view=${nextView}`;
+    const response = await fetch(`/api/drive/objects${query}`, { credentials: "include" });
+    const body = (await response.json()) as {
+      objects?: DriveFile[];
+      quota?: { bytesStored: number; quotaBytes: number };
+      message?: string;
+      error?: string;
+    };
     if (!response.ok) {
       setNotice(body.message ?? body.error ?? "Drive is unavailable");
       setSignedIn(false);
       return;
     }
     setSignedIn(true);
-    setFiles(body.objects ?? []);
+    const objects = body.objects ?? [];
+    if (next) {
+      for (const file of objects) {
+        if (file.displayName.startsWith("cmls1.")) {
+          try {
+            file.displayName = await openName(next, file.displayName);
+          } catch {
+            file.displayName = "Sealed file";
+          }
+        }
+      }
+    }
+    setFiles(objects);
+    if (body.quota) setQuotaText(`${formatBytes(body.quota.bytesStored)} of ${formatBytes(body.quota.quotaBytes)}`);
     setNotice("");
   }
 
@@ -262,19 +436,55 @@ function SessionDriveView() {
     void refresh().catch(() => setSignedIn(false));
   }, []);
 
+  // Cumulus ID never gives this page a password, so sealing uses a separate Drive passphrase
+  // (the same scheme as the access-link view): the key is derived on this device and never sent.
+  async function unlockDrive() {
+    if (!drivePassphrase) return;
+    const next = await deriveDriveKey(drivePassphrase, "cumulus-drive");
+    setDriveKey(next);
+    setDrivePassphrase("");
+    await refresh(next);
+    setNotice("New uploads are sealed on this device before they leave it.");
+  }
+
   async function upload(file: File) {
+    let payload: BodyInit = file;
+    let media = file.type || "application/octet-stream";
+    let displayName = file.name;
+    if (driveKey) {
+      const sealed = await sealContent(driveKey, new Uint8Array(await file.arrayBuffer()));
+      payload = new Blob([toArrayBuffer(sealed)]);
+      media = SEAL_MEDIA_TYPE;
+      displayName = await sealName(driveKey, file.name);
+    }
     const response = await fetch("/api/drive/objects", {
       method: "POST",
       credentials: "include",
       headers: {
-        "content-type": file.type || "application/octet-stream",
+        "content-type": media,
         "idempotency-key": crypto.randomUUID(),
-        "x-display-name": file.name,
+        "x-display-name": displayName,
+        "x-preview-class": previewClassFor(file.type || "application/octet-stream", file.name),
       },
-      body: file,
+      body: payload,
     });
     const body = (await response.json()) as { message?: string; error?: string };
     if (!response.ok) setNotice(body.message ?? body.error ?? "Upload failed");
+    await refresh();
+  }
+
+  async function sessionOp(op: string, fields: Record<string, unknown>) {
+    const response = await fetch("/api/drive/ops", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op, ...fields }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      setNotice(body.message ?? "That Drive action was refused.");
+      return;
+    }
     await refresh();
   }
 
@@ -333,6 +543,7 @@ function SessionDriveView() {
             Private files for the signed-in account. Bytes stay on this server&apos;s disk. A share
             link is one file, expires, and stops working as soon as you revoke it. The demo ledger
             is a separate browser preview.
+            {quotaText ? ` ${quotaText} used.` : ""}
           </p>
         </div>
       </div>
@@ -359,6 +570,13 @@ function SessionDriveView() {
       ) : (
         <>
           <div className="actions">
+            {(["files", "photos", "starred", "trash"] as const).map((item) => (
+              <button key={item} className="btn" type="button" onClick={() => { setListView(item); void refresh(driveKey, item); }}>
+                {item[0].toUpperCase() + item.slice(1)}
+              </button>
+            ))}
+            <input className="field" aria-label="Drive passphrase" placeholder="Drive passphrase" type="password" value={drivePassphrase} onChange={(event) => setDrivePassphrase(event.target.value)} />
+            <button className="btn" type="button" onClick={() => void unlockDrive()}>{driveKey ? "Unlocked" : "Unlock"}</button>
             <label className="btn">
               Upload
               <input
@@ -414,6 +632,12 @@ function SessionDriveView() {
                   <button className="btn" type="button" disabled={!consent || file.status !== "stored"} onClick={() => share(file.id)}>
                     Share
                   </button>
+                  <button className="btn" type="button" onClick={() => sessionOp(listView === "trash" ? "restore" : "trash", { id: file.id })}>
+                    {listView === "trash" ? "Restore" : "Trash"}
+                  </button>
+                  <button className="btn" type="button" onClick={() => sessionOp("star", { id: file.id, starred: true })}>
+                    Star
+                  </button>
                   <button className="btn" type="button" onClick={() => remove(file.id)}>
                     Delete
                   </button>
@@ -431,4 +655,43 @@ function formatBytes(bytes: number) {
   if (bytes < 1000) return `${bytes} B`;
   if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} KB`;
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+async function visibleName(object: { object_key: string; sealed_name?: string | null }, driveKey: CryptoKey | null) {
+  if (object.sealed_name && driveKey) {
+    try {
+      return await openName(driveKey, object.sealed_name);
+    } catch {
+      return "Sealed file";
+    }
+  }
+  return object.sealed_name ? "Sealed file" : object.object_key;
+}
+
+function filterListing(objects: Listed[], prefix: string, query: string, view: string) {
+  const folders = new Set<string>();
+  const files: Listed[] = [];
+  for (const object of objects) {
+    const name = object.label;
+    if (name.endsWith("/.keep")) {
+      const folder = name.slice(prefix.length).replace(/\/\.keep$/, "");
+      if (folder && !folder.includes("/")) folders.add(folder);
+      continue;
+    }
+    if (view !== "trash" && !name.startsWith(prefix)) continue;
+    const rest = name.startsWith(prefix) ? name.slice(prefix.length) : name;
+    const slash = rest.indexOf("/");
+    if (slash >= 0) folders.add(rest.slice(0, slash));
+    else if (nameMatches(rest, query)) files.push({ ...object, label: rest });
+  }
+  return { folders: [...folders], files };
+}
+
+function saveBlob(bytes: Uint8Array, filename: string, type: string) {
+  const url = URL.createObjectURL(new Blob([toArrayBuffer(bytes)], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }

@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { spawnSync } from "node:child_process";
+import { test as nodeTest } from "node:test";
 import { randomBytes } from "node:crypto";
 import { createServer } from "../src/server.mjs";
 import { call, createTenant, listen, testKeys, tokenFor, ISSUER, AUDIENCE } from "./helpers.mjs";
 import { ensureContainers, POSTGRES_URL, S3_ENDPOINT } from "./containers.mjs";
 
-test("postgres quotas and seaweedfs S3 stub stay on loopback", async (t) => {
+const docker = spawnSync("docker", ["--version"], { stdio: "ignore" });
+
+nodeTest("postgres quotas and seaweedfs S3 stub stay on loopback", { skip: docker.status === 0 ? false : "docker is not installed" }, async (t) => {
   await ensureContainers();
   const keys = await testKeys();
   const masterKey = randomBytes(32);

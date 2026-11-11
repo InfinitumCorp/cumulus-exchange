@@ -161,9 +161,9 @@ export function requirePurpose(principal, purpose, action) {
     throw new HttpError(403, "AccessDenied", "Purpose is not granted on this CID");
   }
   const allowed = {
-    "drive.read": ["object.get", "object.list", "usage.get"],
-    "drive.write": ["object.get", "object.list", "object.put", "object.delete", "usage.get"],
-    "drive.share": ["share.create", "share.revoke", "object.get", "object.list"],
+    "drive.read": ["object.get", "object.list", "usage.get", "parity.read"],
+    "drive.write": ["object.get", "object.list", "object.put", "object.delete", "usage.get", "parity.read", "parity.write"],
+    "drive.share": ["share.create", "share.revoke", "object.get", "object.list", "parity.read"],
   };
   const actions = allowed[purpose] ?? [];
   if (!actions.includes(action)) {
