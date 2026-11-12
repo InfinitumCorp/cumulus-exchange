@@ -218,18 +218,28 @@ function waitForPopupToken(popup: Window): Promise<string | null> {
  * preview the local clear is sufficient, so it always resolves.
  */
 export async function signOut(redirectTo = "/"): Promise<void> {
+  // Cumulus://ID's logout URL (with id_token_hint), when the server returns one,
+  // so this app session also leaves the person's Cumulus://ID session list. It
+  // sends them back to `redirectTo` afterwards.
+  let providerLogoutUrl: string | null = null;
   await runSignOut({
     livePreview: inLivePreview(),
     hasBearer: Boolean(getBearerToken()),
     // Better Auth resolves with `{ error }` instead of rejecting, so surface a
     // failed response as a rejection for the sequence to act on.
     requestSignOut: async () => {
-      const { error } = await authClient.signOut();
+      const { data, error } = await authClient.signOut({
+        callbackURL: new URL(redirectTo, window.location.origin).toString(),
+        disableRedirect: true,
+      });
       if (error) throw new Error(error.message ?? "Sign-out failed");
+      const url = (data as { url?: unknown } | null)?.url;
+      providerLogoutUrl = typeof url === "string" && url.startsWith("https://") ? url : null;
     },
     clearToken: () => setBearerToken(null),
     redirect: () => {
-      window.location.href = redirectTo;
+      // Not inside the live-preview iframe: the issuer's page will not frame.
+      window.location.href = (!inLivePreview() && providerLogoutUrl) || redirectTo;
     },
   });
 }
