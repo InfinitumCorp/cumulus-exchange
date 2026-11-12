@@ -2,12 +2,15 @@
  * Self-hosted Better Auth for THIS app (server-only).
  *
  * The app runs its own Better Auth at `/api/auth/*`, so the session cookie stays
- * on this app's own origin. People sign in with **Cumulus ID** only
- * (https://id.cumuluscloud.app, or `CID_ISSUER` for a mirror that loads in
- * Russia): a `genericOAuth` provider runs authorization code + PKCE against it
- * as the public client `cumulus-cloud` (`CID_CLIENT_ID`). There is no local
- * email/password, passcode or PIN; people without a Cumulus ID create one on
- * the issuer's page in the same flow and come back here signed in.
+ * on this app's own origin. People sign in with **Cumulus://ID** only (issuer
+ * https://id.cumuluscloud.app/realms/cumulus, or `CID_ISSUER` for a mirror): a
+ * `genericOAuth` OIDC provider runs authorization code + PKCE S256 + nonce
+ * against it as a public client (`cumulus-cloud`, or `cumulus-exchange` on
+ * exchange.cumuluscloud.app; `CID_CLIENT_ID` overrides). The ID token is
+ * verified against the issuer's JWKS before a session is created, and the local
+ * user is keyed by its `sub` (the cid). There is no local email/password,
+ * passcode or PIN; people without a Cumulus://ID create one on the issuer's
+ * page (`prompt=create`) in the same flow and come back here signed in.
  *
  * Modes:
  *   - Deployed: `BETTER_AUTH_URL` + `BETTER_AUTH_SECRET` + `DATABASE_URL`, so
@@ -31,7 +34,8 @@ import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
-import { cidConfig, cidProfileFromTokens, cidUserInfo, exchangeCidCode, cidAuthorizeUrl } from "./cumulus-id.ts";
+import { CID_SCOPES, cidConfig, cidEndpoints, cidUserInfo } from "./cumulus-id.ts";
+import { verifyCidIdToken } from "./cumulus-id-token.server.ts";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { SIGN_IN_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
@@ -65,8 +69,9 @@ const env = (key: string): string | undefined => {
 // provisions auth; set it to "false" to force auth off everywhere (dev user).
 const authDisabled = env("VITE_AUTH_ENABLED") === "false";
 
-// Cumulus ID: issuer and public client id. Neither is a secret.
+// Cumulus://ID: issuer and public client id. Neither is a secret.
 const cid = cidConfig();
+const cidUrls = cidEndpoints(cid.issuer);
 
 /** True when Cumulus ID sign-in is active (real auth is enforced). */
 export const authConfigured = !authDisabled && Boolean(cid.clientId);
@@ -76,7 +81,8 @@ export const authConfigured = !authDisabled && Boolean(cid.clientId);
 // a dynamic `*.grok-sandbox.com` host), so we hand Better Auth a dynamic baseURL:
 // it derives the origin per-request from the (proxied) host, validated against the
 // preview allowlist, which makes the OAuth `redirect_uri` the concrete preview URL.
-// Cumulus ID only returns codes to origins nexus lists for `cumulus-cloud`.
+// Cumulus://ID only returns codes to origins cumulus-id `src/clients.ts` lists
+// for this client id.
 const explicitBaseURL = env("BETTER_AUTH_URL");
 // Explicit `string[]` (not a readonly tuple) — Better Auth's DynamicBaseURLConfig
 // requires a mutable `allowedHosts: string[]`.
@@ -123,23 +129,40 @@ const database = databaseUrl
 export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
 
 // Built separately so the `betterAuth({...})` call stays easy to edit.
-// Both providers are the same Cumulus ID client; the "create" one adds
+// Both providers are the same Cumulus://ID client; the "create" one adds
 // `prompt=create` so the issuer opens on "Create a Cumulus ID".
+//
+// `discoveryUrl` + `requireIdTokenVerification` make Better Auth send a nonce,
+// verify the ID token (JWKS signature, iss, aud, exp, nonce) and key the account
+// by its `sub`; the provider is skipped rather than downgraded when the JWKS
+// cannot be found. `getUserInfo` re-checks the token against THIS app's issuer
+// and client id and refuses a sign-in that came back without an ID token.
 const cumulusIdPlugin = authConfigured
   ? genericOAuth({
       config: SIGN_IN_PROVIDERS.map(({ providerId, create }) => ({
         providerId,
         clientId: cid.clientId,
-        authorizationUrl: cidAuthorizeUrl(cid.issuer),
+        // Public client: no secret, PKCE S256 binds the code exchange.
+        tokenEndpointAuth: { method: "none" as const },
         pkce: true,
-        scopes: ["openid", "profile", "email"],
+        discoveryUrl: cidUrls.discovery,
+        requireIdTokenVerification: true,
+        authorizationUrl: cidUrls.authorize,
+        tokenUrl: cidUrls.token,
+        userInfoUrl: cidUrls.userinfo,
+        // Sign-out sends people to Cumulus://ID's logout with id_token_hint so
+        // this app session leaves their Cumulus://ID session list.
+        endSessionEndpoint: cidUrls.logout,
+        scopes: [...CID_SCOPES],
         ...(create ? { authorizationUrlParams: { prompt: "create" } } : {}),
-        // Cumulus ID's token endpoint takes JSON and returns the profile with
-        // the token, so redeem and read the person ourselves.
-        getToken: (data) => exchangeCidCode(cid, data),
         getUserInfo: async (tokens) => {
-          const profile = await cidProfileFromTokens(cid, tokens);
-          return profile ? cidUserInfo(profile) : null;
+          if (!tokens.idToken) return null;
+          try {
+            return cidUserInfo(await verifyCidIdToken(cid, tokens.idToken));
+          } catch (error) {
+            console.error("[cumulus-id] ID token rejected", error instanceof Error ? error.message : error);
+            return null;
+          }
         },
       })),
     })
@@ -157,7 +180,7 @@ export const auth = betterAuth({
   // local loopback variants, or clients get "Invalid origin".
   trustedOrigins,
 
-  // Encrypt Cumulus ID tokens at rest, and treat Cumulus ID as the trusted
+  // Encrypt Cumulus://ID tokens at rest, and treat Cumulus://ID as the trusted
   // first-party identity: "sign in" and "create" are the same CID, so they link
   // to one user instead of failing with `account_not_linked`.
   account: {

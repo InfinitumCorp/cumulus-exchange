@@ -1,21 +1,38 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import {
   CUMULUS_ID_CREATE_PROVIDER_ID,
   CUMULUS_ID_PROVIDER_ID,
   DEFAULT_CID_CLIENT_ID,
   DEFAULT_CID_ISSUER,
+  EXCHANGE_CID_CLIENT_ID,
   SIGN_IN_PROVIDERS,
   cidConfig,
-  cidProfileFromTokens,
+  cidEndpoints,
   cidUserInfo,
-  exchangeCidCode,
 } from "./cumulus-id.ts";
+import { verifyCidIdToken } from "./cumulus-id-token.server.ts";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const ISSUER = "https://id.cumuluscloud.app/realms/cumulus";
 
-describe("Cumulus ID sign-in", () => {
+async function signer() {
+  const { privateKey, publicKey } = await generateKeyPair("ES256");
+  const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "ES256", use: "sig" };
+  const keys = createLocalJWKSet({ keys: [jwk] });
+  const sign = (claims: Record<string, unknown>, opts: { typ?: string; iss?: string; aud?: string | string[]; exp?: string } = {}) =>
+    new SignJWT({ cid: "cid_7c1e", email: "ada@cumuluscloud.app", email_verified: true, name: "Ada", ...claims })
+      .setProtectedHeader({ alg: "ES256", kid: "k1", typ: opts.typ ?? "JWT" })
+      .setIssuer(opts.iss ?? ISSUER)
+      .setAudience(opts.aud ?? "cumulus-cloud")
+      .setSubject("cid_7c1e")
+      .setIssuedAt()
+      .setExpirationTime(opts.exp ?? "5m")
+      .sign(privateKey);
+  return { keys, sign };
+}
+
+describe("Cumulus://ID sign-in", () => {
   it("offers only Cumulus ID: sign in, then create", () => {
     assert.deepEqual(
       SIGN_IN_PROVIDERS.map((p) => [p.providerId, p.label, p.create]),
@@ -26,72 +43,68 @@ describe("Cumulus ID sign-in", () => {
     );
   });
 
-  it("defaults to id.cumuluscloud.app and the cumulus-cloud client", () => {
+  it("defaults to the cumulus realm issuer and the cumulus-cloud client", () => {
     assert.deepEqual(cidConfig({}), { issuer: DEFAULT_CID_ISSUER, clientId: DEFAULT_CID_CLIENT_ID });
-    assert.equal(DEFAULT_CID_ISSUER, "https://id.cumuluscloud.app");
+    assert.equal(DEFAULT_CID_ISSUER, ISSUER);
+    assert.equal(DEFAULT_CID_CLIENT_ID, "cumulus-cloud");
+  });
+
+  it("uses the cumulus-exchange client on exchange.cumuluscloud.app only", () => {
+    assert.equal(cidConfig({ BETTER_AUTH_URL: "https://exchange.cumuluscloud.app" }).clientId, EXCHANGE_CID_CLIENT_ID);
+    assert.equal(cidConfig({ BETTER_AUTH_URL: "https://exchange.cumuluscloud.app/" }).clientId, "cumulus-exchange");
+    assert.equal(cidConfig({ BETTER_AUTH_URL: "https://cloud.cumuluscloud.app" }).clientId, "cumulus-cloud");
+    assert.equal(cidConfig({ BETTER_AUTH_URL: "https://exchange.cumuluscloud.app.evil.test" }).clientId, "cumulus-cloud");
+    assert.equal(cidConfig({ BETTER_AUTH_URL: "https://exchange.cumuluscloud.app", CID_CLIENT_ID: "x" }).clientId, "x");
   });
 
   it("takes a mirror issuer from CID_ISSUER", () => {
-    assert.deepEqual(cidConfig({ CID_ISSUER: " https://ru.mail.cumuluscloud.app/ ", CID_CLIENT_ID: "x" }), {
-      issuer: "https://ru.mail.cumuluscloud.app",
+    assert.deepEqual(cidConfig({ CID_ISSUER: " https://mirror.example/realms/cumulus/ ", CID_CLIENT_ID: "x" }), {
+      issuer: "https://mirror.example/realms/cumulus",
       clientId: "x",
     });
   });
 
-  it("redeems the code with PKCE as JSON and keeps the profile", async () => {
-    let seen: { url: string; body: Record<string, unknown> } | null = null;
-    const fake = (async (url: string, init: RequestInit) => {
-      seen = { url, body: JSON.parse(String(init.body)) };
-      return json(200, {
-        access_token: "opaque-token-abcdefghijklmnop",
-        expires_in: 3600,
-        profile: { cid: "cid_1", username: "alex", email: "alex@cumuluscloud.app" },
-      });
-    }) as unknown as typeof fetch;
-    const config = cidConfig({});
-    const tokens = await exchangeCidCode(
-      config,
-      { code: "c", codeVerifier: "v", redirectURI: "https://cumuluscloud.app/api/auth/callback/cumulus-id" },
-      fake,
-    );
-    assert.deepEqual(seen, {
-      url: "https://id.cumuluscloud.app/api/id/token",
-      body: {
-        code: "c",
-        code_verifier: "v",
-        client_id: "cumulus-cloud",
-        redirect_uri: "https://cumuluscloud.app/api/auth/callback/cumulus-id",
-      },
-    });
-    assert.equal(tokens.accessToken, "opaque-token-abcdefghijklmnop");
-    assert.ok(tokens.accessTokenExpiresAt instanceof Date);
-    const profile = await cidProfileFromTokens(config, tokens, (() => {
-      throw new Error("no userinfo call expected");
-    }) as unknown as typeof fetch);
-    assert.deepEqual(cidUserInfo(profile!), {
+  it("derives the OIDC endpoints from the issuer", () => {
+    const e = cidEndpoints(ISSUER);
+    assert.equal(e.discovery, `${ISSUER}/.well-known/openid-configuration`);
+    assert.equal(e.authorize, `${ISSUER}/protocol/openid-connect/auth`);
+    assert.equal(e.token, `${ISSUER}/protocol/openid-connect/token`);
+    assert.equal(e.jwks, `${ISSUER}/protocol/openid-connect/certs`);
+    assert.equal(e.logout, `${ISSUER}/protocol/openid-connect/logout`);
+  });
+
+  it("keys the user by sub", () => {
+    assert.deepEqual(cidUserInfo({ sub: "cid_1", email: "Alex@cumuluscloud.app", email_verified: true, preferred_username: "alex" }), {
       id: "cid_1",
       sub: "cid_1",
       email: "alex@cumuluscloud.app",
       emailVerified: true,
       name: "alex",
     });
+    assert.equal(cidUserInfo({ sub: "cid_2" }).emailVerified, false);
+  });
+});
+
+describe("Cumulus://ID ID token", () => {
+  const config = { issuer: ISSUER, clientId: "cumulus-cloud" };
+
+  it("accepts a signed token for this issuer and client, and checks the nonce", async () => {
+    const { keys, sign } = await signer();
+    const token = await sign({ nonce: "n1" });
+    const claims = await verifyCidIdToken(config, token, { keys, nonce: "n1" });
+    assert.equal(claims.sub, "cid_7c1e");
+    assert.equal(claims.email, "ada@cumuluscloud.app");
+    await assert.rejects(verifyCidIdToken(config, token, { keys, nonce: "other" }), /nonce/);
   });
 
-  it("refuses a code without a verifier or a rejected code", async () => {
-    const config = cidConfig({});
-    await assert.rejects(exchangeCidCode(config, { code: "c", redirectURI: "r" }), /PKCE/);
-    const reject = (async () => json(400, { error: "Invalid code" })) as unknown as typeof fetch;
-    await assert.rejects(exchangeCidCode(config, { code: "c", codeVerifier: "v", redirectURI: "r" }, reject), /Invalid code/);
-  });
-
-  it("falls back to /api/id/userinfo when the token carried no profile", async () => {
-    const fake = (async (url: string, init: RequestInit) => {
-      assert.equal(url, "https://id.cumuluscloud.app/api/id/userinfo");
-      assert.equal((init.headers as Record<string, string>).authorization, "Bearer t");
-      return json(200, { cid: "cid_2", name: "Sam" });
-    }) as unknown as typeof fetch;
-    const profile = await cidProfileFromTokens(cidConfig({}), { accessToken: "t", raw: {} }, fake);
-    assert.equal(profile?.cid, "cid_2");
-    assert.equal(cidUserInfo(profile!).emailVerified, false);
+  it("refuses another issuer, another client, an expired token, an access token and a foreign key", async () => {
+    const { keys, sign } = await signer();
+    await assert.rejects(verifyCidIdToken(config, await sign({}, { iss: "https://cognito-idp.us-east-1.amazonaws.com/x" }), { keys }));
+    await assert.rejects(verifyCidIdToken(config, await sign({}, { aud: "scalvs" }), { keys }));
+    await assert.rejects(verifyCidIdToken(config, await sign({}, { exp: "-1m" }), { keys }));
+    await assert.rejects(verifyCidIdToken(config, await sign({}, { typ: "at+jwt" }), { keys }), /access token/);
+    await assert.rejects(verifyCidIdToken(config, await sign({}, { aud: ["cumulus-cloud", "scalvs"] }), { keys }), /another client/);
+    const other = await signer();
+    await assert.rejects(verifyCidIdToken(config, await other.sign({}), { keys }));
   });
 });

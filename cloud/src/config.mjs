@@ -5,6 +5,8 @@
  */
 
 export const DEFAULT_ROOT_DOMAIN = "cumuluscloud.app";
+/** Cumulus://ID client ids (cumulus-id `src/clients.ts`) whose access tokens Drive accepts. */
+export const DEFAULT_CID_AUDIENCES = ["cumulus-cloud", "cumulus-exchange", "cumulus-mail"];
 
 const HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
@@ -44,8 +46,13 @@ export function loadConfig(env = process.env) {
   const idHost = hostname(env.CUMULUS_ID_HOST || `id.${rootDomain}`, "CUMULUS_ID_HOST");
   const cloudHost = hostname(env.CUMULUS_CLOUD_HOST || `cloud.${rootDomain}`, "CUMULUS_CLOUD_HOST");
   const mailHost = hostname(env.CUMULUS_MAIL_HOST || `mail.${rootDomain}`, "CUMULUS_MAIL_HOST");
-  // Cumulus ID: people sign in there. CID_ISSUER points at a mirror (e.g. one reachable from Russia).
-  const cidIssuer = (env.CID_ISSUER || `https://${idHost}`).replace(/\/+$/, "");
+  // Cumulus://ID: people sign in there (OIDC realm issuer). CID_ISSUER points at a mirror.
+  const cidIssuer = (env.CID_ISSUER || `https://${idHost}/realms/cumulus`).replace(/\/+$/, "");
+  // Client ids whose access tokens (`aud`) Drive accepts: Cloud, the Exchange add-on and Mail.
+  const cidAudiences = (env.CID_AUDIENCES || DEFAULT_CID_AUDIENCES.join(","))
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
   const issuer = (env.CUMULUS_KEYCLOAK_ISSUER || `https://${idHost}/realms/cumulus`).replace(/\/+$/, "");
   const audience = env.CUMULUS_KEYCLOAK_AUDIENCE || `https://${idHost}`;
   const jwksUrl = env.CUMULUS_KEYCLOAK_JWKS_URL || `${issuer}/protocol/openid-connect/certs`;
@@ -59,6 +66,7 @@ export function loadConfig(env = process.env) {
     cloudHost,
     mailHost,
     cidIssuer,
+    cidAudiences,
     issuer,
     audience,
     jwksUrl,
