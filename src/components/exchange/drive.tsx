@@ -10,6 +10,7 @@ import {
 } from "@/lib/exchange/drive-client";
 import { nameMatches, previewClassFor } from "@/lib/drive/preview-class";
 import { deriveDriveKey, openContent, openName, SEAL_MEDIA_TYPE, sealContent, sealName, toArrayBuffer } from "@/lib/drive/seal";
+import { StoragePlans } from "./storage-plans";
 
 type ObjectRow = {
   object_key: string;
@@ -252,6 +253,7 @@ function CloudDriveView() {
           </p>
         </div>
       </div>
+      <StoragePlans />
       <div className="actions">
         <label className="btn-primary">
           Upload
@@ -547,6 +549,7 @@ function SessionDriveView() {
           </p>
         </div>
       </div>
+      {signedIn ? <StoragePlans /> : null}
       {notice ? <div className="notice">{notice}</div> : null}
       {!signedIn ? (
         <div className="card">
