@@ -9,6 +9,8 @@ import { LicensesView } from "@/components/exchange/licenses";
 import { MarketView } from "@/components/exchange/market";
 import { QueryView } from "@/components/exchange/query";
 import { HTMLSelect } from "@blueprintjs/core";
+import { CumulusBar } from "@/components/cumulus-bar";
+import { cidClientIdForOrigin } from "@/lib/auth/cumulus-id";
 import { money, PREVIEW_TENANTS } from "@/lib/exchange/model";
 import { session, useExchange, type View } from "@/lib/exchange/store";
 
@@ -67,6 +69,7 @@ export function ExchangeApp() {
           <span className="hide-sm">{actor?.mail ?? session.mail}</span>
           <span className="wallet">{money(wallet)}</span>
         </div>
+        <CumulusBar className="cumulus-bar" client={cidClientIdForOrigin(typeof window === "undefined" ? undefined : window.location.origin)} />
       </header>
       <nav className="nav desktop-nav" aria-label="Cumulus://Cloud">
         {NAV.map((item) => (
