@@ -11,3 +11,7 @@ directory = "./assets"
 binding = "ASSETS"
 run_worker_first = true
 not_found_handling = "single-page-application"
+
+# Global users run on US servers (Ashburn, Virginia); Russia is served by the ru.* copies on Yandex Cloud.
+[placement]
+region = "gcp:us-east4"
