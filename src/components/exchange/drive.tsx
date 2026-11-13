@@ -10,6 +10,7 @@ import {
 } from "@/lib/exchange/drive-client";
 import { nameMatches, previewClassFor } from "@/lib/drive/preview-class";
 import { deriveDriveKey, openContent, openName, SEAL_MEDIA_TYPE, sealContent, sealName, toArrayBuffer } from "@/lib/drive/seal";
+import { StoragePlans } from "./storage-plans";
 
 type ObjectRow = {
   object_key: string;
@@ -23,26 +24,47 @@ type Usage = { usedBytes: number; maxBytes: number; maxFileBytes: number };
 type Listed = ObjectRow & { label: string };
 type Preview = { name: string; url: string; kind: string; text?: string };
 
+type DriveToken = { token: string; expiresAt: string | null };
+
 /**
- * Cloud-plane preview when `/api/drive/dev-session` answers.
- * Otherwise the Better Auth session store (local bytes + PGLite).
- * Supabase mode stays in `cloud/` and is not replaced by the session store.
+ * A bearer for the cloud Drive, or null when this host has none.
+ * `/api/drive/cid-token` is the signed-in person's Cumulus ID access token (the
+ * cumulus-cloud Worker; the Edge Function verifies it). `/api/drive/dev-session`
+ * is the local cloud-plane preview's demo token.
+ */
+async function fetchDriveToken(): Promise<DriveToken | null> {
+  for (const path of ["cid-token", "dev-session"]) {
+    try {
+      const response = await fetch(`${DRIVE_API}/${path}`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) continue;
+      const body = (await response.json()) as { token?: string; expiresAt?: string | null };
+      if (body.token) return { token: body.token, expiresAt: body.expiresAt ?? null };
+    } catch {
+      // Try the next source.
+    }
+  }
+  return null;
+}
+
+/** Fetch a new token 30 seconds before this one expires, or every 4 minutes. */
+function refreshDelay(expiresAt: string | null): number {
+  const at = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+  if (Number.isNaN(at)) return 240_000;
+  return Math.max(15_000, at - Date.now() - 30_000);
+}
+
+/**
+ * Cloud Drive when a token source answers (the Worker deploy or the local
+ * cloud-plane preview). Otherwise the Better Auth session store (local bytes + PGLite).
  */
 export function DriveView() {
   const [mode, setMode] = useState<"pending" | "cloud" | "session">("pending");
 
   useEffect(() => {
     let gone = false;
-    fetch(`${DRIVE_API}/dev-session`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error("no session");
-        const body = (await response.json()) as { token?: string };
-        if (!body.token) throw new Error("no session");
-        if (!gone) setMode("cloud");
-      })
-      .catch(() => {
-        if (!gone) setMode("session");
-      });
+    fetchDriveToken().then((found) => {
+      if (!gone) setMode(found ? "cloud" : "session");
+    });
     return () => {
       gone = true;
     };
@@ -101,19 +123,23 @@ function CloudDriveView() {
 
   useEffect(() => {
     let gone = false;
-    fetch(`${DRIVE_API}/dev-session`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error("no session");
-        const body = (await response.json()) as { token: string };
-        if (gone) return;
-        setToken(body.token);
-        await load(body.token, "files", null);
-      })
-      .catch(() => {
-        if (!gone) setNotice("Drive is available in the local preview. It is not turned on for this server.");
-      });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const renew = async (first: boolean) => {
+      const found = await fetchDriveToken();
+      if (gone) return;
+      if (!found) {
+        setToken(null);
+        setNotice("Sign in with Cumulus ID again to open your Drive.");
+        return;
+      }
+      setToken(found.token);
+      if (first) await load(found.token, "files", null);
+      timer = setTimeout(() => void renew(false), refreshDelay(found.expiresAt));
+    };
+    void renew(true);
     return () => {
       gone = true;
+      if (timer) clearTimeout(timer);
     };
   }, [load]);
 
@@ -252,6 +278,7 @@ function CloudDriveView() {
           </p>
         </div>
       </div>
+      <StoragePlans />
       <div className="actions">
         <label className="btn-primary">
           Upload
@@ -547,6 +574,7 @@ function SessionDriveView() {
           </p>
         </div>
       </div>
+      {signedIn ? <StoragePlans /> : null}
       {notice ? <div className="notice">{notice}</div> : null}
       {!signedIn ? (
         <div className="card">

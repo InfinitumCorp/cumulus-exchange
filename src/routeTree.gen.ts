@@ -10,19 +10,29 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LogoutRouteImport } from './routes/logout'
+import { Route as ApiHealthzRouteImport } from './routes/api/healthz'
+import { Route as V1SplatRouteImport } from './routes/v1/$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiDriveCidTokenRouteImport } from './routes/api/drive/cid-token'
 import { Route as ApiDriveObjectsRouteImport } from './routes/api/drive/objects'
 import { Route as ApiDriveOpsRouteImport } from './routes/api/drive/ops'
 import { Route as ApiDriveSharedRouteImport } from './routes/api/drive/shared'
 import { Route as ApiDriveObjectsIdRouteImport } from './routes/api/drive/objects/$id'
 import { Route as ApiDriveSharesIdRouteImport } from './routes/api/drive/shares/$id'
+import { Route as ApiDriveV1SplatRouteImport } from './routes/api/drive/v1/$'
 import { Route as ApiDriveObjectsIdSharesRouteImport } from './routes/api/drive/objects/$id/shares'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthzRoute = HealthzRouteImport.update({
+  id: '/healthz',
+  path: '/healthz',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -35,9 +45,24 @@ const LogoutRoute = LogoutRouteImport.update({
   path: '/logout',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHealthzRoute = ApiHealthzRouteImport.update({
+  id: '/api/healthz',
+  path: '/api/healthz',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1SplatRoute = V1SplatRouteImport.update({
+  id: '/v1/$',
+  path: '/v1/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDriveCidTokenRoute = ApiDriveCidTokenRouteImport.update({
+  id: '/api/drive/cid-token',
+  path: '/api/drive/cid-token',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDriveObjectsRoute = ApiDriveObjectsRouteImport.update({
@@ -65,6 +90,11 @@ const ApiDriveSharesIdRoute = ApiDriveSharesIdRouteImport.update({
   path: '/api/drive/shares/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDriveV1SplatRoute = ApiDriveV1SplatRouteImport.update({
+  id: '/api/drive/v1/$',
+  path: '/api/drive/v1/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDriveObjectsIdSharesRoute = ApiDriveObjectsIdSharesRouteImport.update({
   id: '/shares',
   path: '/shares',
@@ -73,89 +103,124 @@ const ApiDriveObjectsIdSharesRoute = ApiDriveObjectsIdSharesRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/healthz': typeof HealthzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
+  '/api/healthz': typeof ApiHealthzRoute
+  '/v1/$': typeof V1SplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/drive/cid-token': typeof ApiDriveCidTokenRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
   '/api/drive/ops': typeof ApiDriveOpsRoute
   '/api/drive/shared': typeof ApiDriveSharedRoute
   '/api/drive/objects/$id': typeof ApiDriveObjectsIdRouteWithChildren
   '/api/drive/shares/$id': typeof ApiDriveSharesIdRoute
+  '/api/drive/v1/$': typeof ApiDriveV1SplatRoute
   '/api/drive/objects/$id/shares': typeof ApiDriveObjectsIdSharesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/healthz': typeof HealthzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
+  '/api/healthz': typeof ApiHealthzRoute
+  '/v1/$': typeof V1SplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/drive/cid-token': typeof ApiDriveCidTokenRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
   '/api/drive/ops': typeof ApiDriveOpsRoute
   '/api/drive/shared': typeof ApiDriveSharedRoute
   '/api/drive/objects/$id': typeof ApiDriveObjectsIdRouteWithChildren
   '/api/drive/shares/$id': typeof ApiDriveSharesIdRoute
+  '/api/drive/v1/$': typeof ApiDriveV1SplatRoute
   '/api/drive/objects/$id/shares': typeof ApiDriveObjectsIdSharesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/healthz': typeof HealthzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
+  '/api/healthz': typeof ApiHealthzRoute
+  '/v1/$': typeof V1SplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/drive/cid-token': typeof ApiDriveCidTokenRoute
   '/api/drive/objects': typeof ApiDriveObjectsRouteWithChildren
   '/api/drive/ops': typeof ApiDriveOpsRoute
   '/api/drive/shared': typeof ApiDriveSharedRoute
   '/api/drive/objects/$id': typeof ApiDriveObjectsIdRouteWithChildren
   '/api/drive/shares/$id': typeof ApiDriveSharesIdRoute
+  '/api/drive/v1/$': typeof ApiDriveV1SplatRoute
   '/api/drive/objects/$id/shares': typeof ApiDriveObjectsIdSharesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/healthz'
     | '/login'
     | '/logout'
+    | '/api/healthz'
+    | '/v1/$'
     | '/api/auth/$'
+    | '/api/drive/cid-token'
     | '/api/drive/objects'
     | '/api/drive/ops'
     | '/api/drive/shared'
     | '/api/drive/objects/$id'
     | '/api/drive/shares/$id'
+    | '/api/drive/v1/$'
     | '/api/drive/objects/$id/shares'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/healthz'
     | '/login'
     | '/logout'
+    | '/api/healthz'
+    | '/v1/$'
     | '/api/auth/$'
+    | '/api/drive/cid-token'
     | '/api/drive/objects'
     | '/api/drive/ops'
     | '/api/drive/shared'
     | '/api/drive/objects/$id'
     | '/api/drive/shares/$id'
+    | '/api/drive/v1/$'
     | '/api/drive/objects/$id/shares'
   id:
     | '__root__'
     | '/'
+    | '/healthz'
     | '/login'
     | '/logout'
+    | '/api/healthz'
+    | '/v1/$'
     | '/api/auth/$'
+    | '/api/drive/cid-token'
     | '/api/drive/objects'
     | '/api/drive/ops'
     | '/api/drive/shared'
     | '/api/drive/objects/$id'
     | '/api/drive/shares/$id'
+    | '/api/drive/v1/$'
     | '/api/drive/objects/$id/shares'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HealthzRoute: typeof HealthzRoute
   LoginRoute: typeof LoginRoute
   LogoutRoute: typeof LogoutRoute
+  ApiHealthzRoute: typeof ApiHealthzRoute
+  V1SplatRoute: typeof V1SplatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDriveCidTokenRoute: typeof ApiDriveCidTokenRoute
   ApiDriveObjectsRoute: typeof ApiDriveObjectsRouteWithChildren
   ApiDriveOpsRoute: typeof ApiDriveOpsRoute
   ApiDriveSharedRoute: typeof ApiDriveSharedRoute
   ApiDriveSharesIdRoute: typeof ApiDriveSharesIdRoute
+  ApiDriveV1SplatRoute: typeof ApiDriveV1SplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -165,6 +230,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/healthz': {
+      id: '/healthz'
+      path: '/healthz'
+      fullPath: '/healthz'
+      preLoaderRoute: typeof HealthzRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -181,11 +253,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LogoutRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/healthz': {
+      id: '/api/healthz'
+      path: '/api/healthz'
+      fullPath: '/api/healthz'
+      preLoaderRoute: typeof ApiHealthzRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/$': {
+      id: '/v1/$'
+      path: '/v1/$'
+      fullPath: '/v1/$'
+      preLoaderRoute: typeof V1SplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/drive/cid-token': {
+      id: '/api/drive/cid-token'
+      path: '/api/drive/cid-token'
+      fullPath: '/api/drive/cid-token'
+      preLoaderRoute: typeof ApiDriveCidTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/drive/objects': {
@@ -223,6 +316,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDriveSharesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/drive/v1/$': {
+      id: '/api/drive/v1/$'
+      path: '/api/drive/v1/$'
+      fullPath: '/api/drive/v1/$'
+      preLoaderRoute: typeof ApiDriveV1SplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/drive/objects/$id/shares': {
       id: '/api/drive/objects/$id/shares'
       path: '/shares'
@@ -258,13 +358,18 @@ const ApiDriveObjectsRouteWithChildren = ApiDriveObjectsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HealthzRoute: HealthzRoute,
   LoginRoute: LoginRoute,
   LogoutRoute: LogoutRoute,
+  ApiHealthzRoute: ApiHealthzRoute,
+  V1SplatRoute: V1SplatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDriveCidTokenRoute: ApiDriveCidTokenRoute,
   ApiDriveObjectsRoute: ApiDriveObjectsRouteWithChildren,
   ApiDriveOpsRoute: ApiDriveOpsRoute,
   ApiDriveSharedRoute: ApiDriveSharedRoute,
   ApiDriveSharesIdRoute: ApiDriveSharesIdRoute,
+  ApiDriveV1SplatRoute: ApiDriveV1SplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

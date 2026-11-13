@@ -1,6 +1,10 @@
 /**
- * Free Cloudflare Worker. Serves the Vite console as static assets and proxies
- * Drive API calls to the Supabase Edge Function. No KV, D1, or R2.
+ * Drive API proxy to the Supabase Edge Function. No KV, D1, or R2.
+ * The deployed cumulus-cloud Worker is the console's own server build
+ * (NITRO_PRESET=cloudflare-module); `server/middleware/drive-proxy.ts` calls
+ * `driveProxy` so only Drive API paths reach the function and everything else,
+ * `/api/auth/*` included, stays with the console. `handleRequest` keeps the
+ * older static-assets mode for tests and local use.
  * This module does not call the live project unless SUPABASE_FUNCTION_URL is set
  * at deploy time. Tests pass their own fetch implementation.
  */
@@ -93,9 +97,11 @@ export function route(url, env) {
   const path = url.pathname;
   const cloudHost = String(env.CUMULUS_CLOUD_HOST || "cloud.cumuluscloud.app").toLowerCase();
   const onCloud = url.hostname.toLowerCase() === cloudHost;
-  if (path === "/api" || path.startsWith("/api/")) {
-    const rest = path === "/api" ? "/" : path.slice("/api".length);
-    return { kind: "proxy", path: rest.startsWith("/") ? rest : `/${rest}` };
+  // Only Drive API calls leave the console: /api/drive/v1/* (the console's cloud
+  // Drive) and /api/healthz. Other /api paths (/api/auth, the console's own
+  // /api/drive routes) belong to the console server.
+  if (path === "/api/healthz" || path.startsWith("/api/drive/v1/")) {
+    return { kind: "proxy", path: path.slice("/api".length) };
   }
   if (onCloud && (path === "/healthz" || path === "/v1" || path.startsWith("/v1/"))) {
     return { kind: "proxy", path };
@@ -155,6 +161,14 @@ function applyCors(headers, origin, allowlist) {
   for (const [name, value] of Object.entries(corsHeaders(origin, allowlist))) {
     headers.set(name, value);
   }
+}
+
+/** The Drive proxy response for a Drive API path, or null to let the console handle it. */
+export async function driveProxy(request, env) {
+  const url = new URL(request.url);
+  const decision = route(url, env);
+  if (decision.kind === "asset") return null;
+  return proxy(request, env, url, decision.path);
 }
 
 export async function handleRequest(request, env) {

@@ -1,15 +1,21 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
+import { CID, CidError, cidAudiences, cidIssuer, cidJwksUrl, createCidVerifier } from "./cid.ts";
+import { functionPath } from "./path.ts";
 
 /**
  * Cumulus Drive on Supabase Edge Functions.
- * Metadata goes through PostgREST so row level security applies.
- * cid is loaded from cumulus.identities by the verified JWT sub.
- * The project-wide access token hook is not enabled. A cid on the token is ignored.
+ * CUMULUS_AUTH_MODE=cid (the default): people sign in with Cumulus://ID. The function
+ * checks the Cumulus ID access token itself (see ./cid.ts); the verified sub is the cid.
+ * PostgREST does not accept Cumulus ID tokens, so metadata calls use the service role,
+ * and every query is filtered by the tenant row that matches the verified cid.
+ * CUMULUS_AUTH_MODE=supabase (opt-in): Supabase Auth JWTs. Metadata goes through
+ * PostgREST as the user so row level security applies, and cid is loaded from
+ * cumulus.identities by the verified JWT sub.
+ * The project-wide access token hook is not enabled. A cid claim on a Supabase token is ignored.
  * Blob keys match the Node S3 driver: tenants/<tenantId>/<blobId>
  * in the private bucket cumulus-drive. This file is not deployed by CI.
  */
 
-const CID = /^cid_[a-z0-9_]{1,64}$/;
 const SUB = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const FILE_CAP = 50_000_000;
@@ -58,9 +64,23 @@ const region = Deno.env.get("CUMULUS_S3_REGION") ?? "local";
 const shareSecret = Deno.env.get("CUMULUS_SHARE_SECRET") ?? "";
 const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://drive.cumuluscloud.app").replace(/\/+$/, "");
 for (const value of [restUrl, s3Endpoint, jwksUrl, issuer]) refuseLive(value);
-const jwks = jwksUrl ? createRemoteJWKSet(new URL(jwksUrl)) : null;
+const authMode = Deno.env.get("CUMULUS_AUTH_MODE") || "cid";
+if (authMode !== "cid" && authMode !== "supabase") throw new Error("CUMULUS_AUTH_MODE must be cid or supabase");
+const jwks = authMode === "supabase" && jwksUrl ? createRemoteJWKSet(new URL(jwksUrl)) : null;
+const verifyCid = authMode === "cid" ? cidVerifier() : null;
 
-type Principal = { token: string; cid: string; sub: string; purpose: string; hint: string | null };
+function cidVerifier() {
+  const base = cidIssuer(Deno.env.get("CID_ISSUER"));
+  return createCidVerifier({
+    issuer: base,
+    audiences: cidAudiences(Deno.env.get("CID_AUDIENCES")),
+    keys: createRemoteJWKSet(new URL(cidJwksUrl(base, Deno.env.get("CID_JWKS_URL")))),
+    jwtVerify: jwtVerify as never,
+  });
+}
+
+/** `db` is the bearer and apikey for PostgREST: the user's own token in supabase mode, the service role in cid mode. */
+type Principal = { cid: string; sub: string; purpose: string; hint: string | null; db: { token: string; key: string } };
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -77,6 +97,7 @@ Deno.serve(async (req) => {
       return json(200, await putObject(principal, located.bucket, located.key, new Uint8Array(await req.arrayBuffer())));
     }
     if (req.method === "GET" && located.key) return await download(principal, located.bucket, located.key);
+    if (req.method === "GET" && !located.key) return json(200, await listObjects(principal, located.bucket, url.searchParams.get("view")));
     if (req.method === "DELETE" && located.key) {
       await deleteObject(principal, located.bucket, located.key);
       return new Response(null, { status: 204 });
@@ -88,14 +109,6 @@ Deno.serve(async (req) => {
     return json(mapped.status, { error: { code: mapped.code, message: mapped.status === 500 ? "Internal error" : mapped.message } });
   }
 });
-
-function functionPath(pathname: string) {
-  for (const prefix of ["/functions/v1/drive", "/drive"]) {
-    if (pathname === prefix) return "/";
-    if (pathname.startsWith(`${prefix}/`)) return pathname.slice(prefix.length);
-  }
-  return pathname.startsWith("/") ? pathname : `/${pathname}`;
-}
 
 function objectPath(path: string) {
   const prefix = "/v1/objects/";
@@ -130,6 +143,19 @@ async function verify(req: Request): Promise<Principal> {
   const header = req.headers.get("authorization") ?? "";
   if (!header.startsWith("Bearer ")) throw new ApiError(401, "AccessDenied", "Missing bearer token");
   const token = header.slice(7).trim();
+  const purpose = req.headers.get("x-cumulus-purpose") ?? "";
+  const hint = req.headers.get("x-cumulus-tenant");
+  if (verifyCid) {
+    if (!serviceKey) throw new ApiError(500, "Config", "Drive auth is not configured");
+    let cid: string;
+    try {
+      cid = await verifyCid(token);
+    } catch (error) {
+      if (error instanceof CidError) throw new ApiError(error.status, error.code, error.message);
+      throw error;
+    }
+    return { cid, sub: cid, purpose, hint, db: { token: serviceKey, key: serviceKey } };
+  }
   if (!jwks || !issuer || !anonKey) throw new ApiError(500, "Config", "Drive auth is not configured");
   let payload;
   try {
@@ -142,11 +168,11 @@ async function verify(req: Request): Promise<Principal> {
   const rows = await rest(token, anonKey, `/identities?user_id=eq.${encodeURIComponent(sub)}&select=cid`);
   const cid = rows?.[0]?.cid;
   if (typeof cid !== "string" || !CID.test(cid)) throw new ApiError(401, "InvalidToken", "CID is not bound to this user");
-  return { token, cid, sub, purpose: req.headers.get("x-cumulus-purpose") ?? "", hint: req.headers.get("x-cumulus-tenant") };
+  return { cid, sub, purpose, hint, db: { token, key: anonKey } };
 }
 
 async function tenant(principal: Principal) {
-  const rows = await rest(principal.token, anonKey, `/tenants?cid=eq.${encodeURIComponent(principal.cid)}&select=id,used_bytes,max_bytes`);
+  const rows = await rest(principal.db.token, principal.db.key, `/tenants?cid=eq.${encodeURIComponent(principal.cid)}&select=id,used_bytes,max_bytes`);
   const row = rows?.[0];
   if (!row) throw new ApiError(403, "AccessDenied", "CID is not bound to a tenant");
   if (principal.hint && principal.hint !== row.id) throw new ApiError(403, "AccessDenied", "Tenant hint does not match the CID");
@@ -170,12 +196,12 @@ async function putObject(principal: Principal, bucket: string, key: string, byte
   const objectKey = `tenants/${owner.id}/${blobId}`;
   await s3("PUT", objectKey, sealed.ciphertext);
   try {
-    const existing = await rest(principal.token, anonKey, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
+    const existing = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
     if (existing?.[0]) {
-      await rest(principal.token, anonKey, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
-      await rest(principal.token, anonKey, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
+      await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
+      await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
     }
-    await rest(principal.token, anonKey, "/objects", {
+    await rest(principal.db.token, principal.db.key, "/objects", {
       method: "POST",
       headers: { prefer: "return=minimal" },
       body: JSON.stringify({
@@ -204,9 +230,19 @@ async function download(principal: Principal, bucket: string, key: string) {
   assertBucket(bucket);
   assertKey(key);
   const owner = await tenant(principal);
-  const rows = await rest(principal.token, anonKey, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256`);
+  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256`);
   if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
   return await plaintextResponse(owner.id, rows[0]);
+}
+
+/** Active objects only. Stars, trash and photos are console parity views that this schema does not store. */
+async function listObjects(principal: Principal, bucket: string, view: string | null) {
+  requirePurpose(principal, "object.get");
+  assertBucket(bucket);
+  const owner = await tenant(principal);
+  if (view && view !== "active") return { objects: [] };
+  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&select=object_key,size_bytes,content_type,created_at&order=object_key.asc`);
+  return { objects: rows ?? [] };
 }
 
 async function deleteObject(principal: Principal, bucket: string, key: string) {
@@ -214,10 +250,10 @@ async function deleteObject(principal: Principal, bucket: string, key: string) {
   assertBucket(bucket);
   assertKey(key);
   const owner = await tenant(principal);
-  const rows = await rest(principal.token, anonKey, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
+  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
   if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
-  await rest(principal.token, anonKey, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
-  await rest(principal.token, anonKey, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
+  await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
+  await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await s3("DELETE", `tenants/${owner.id}/${rows[0].blob_id}`).catch(() => undefined);
 }
 
@@ -231,11 +267,11 @@ async function createShare(principal: Principal, body: { bucket?: string; key?: 
     throw new ApiError(400, "InvalidTtl", "Share links expire in 1 to 900 seconds");
   }
   const owner = await tenant(principal);
-  const rows = await rest(principal.token, anonKey, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
+  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
   if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
   const id = `shr_${hex(crypto.getRandomValues(new Uint8Array(8)))}`;
   const exp = Math.floor(Date.now() / 1000) + (body.ttlSeconds as number);
-  await rest(principal.token, anonKey, "/shares", {
+  await rest(principal.db.token, principal.db.key, "/shares", {
     method: "POST",
     headers: { prefer: "return=minimal" },
     body: JSON.stringify({
