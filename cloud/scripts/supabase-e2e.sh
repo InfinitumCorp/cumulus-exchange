@@ -29,9 +29,13 @@ set +a
 umask 077
 envfile="$(mktemp)"
 pid=""
+cidpid=""
 cleanup() {
   if [ -n "$pid" ]; then
     kill "$pid" 2>/dev/null || true
+  fi
+  if [ -n "$cidpid" ]; then
+    kill "$cidpid" 2>/dev/null || true
   fi
   rm -f "$envfile"
 }
@@ -71,3 +75,44 @@ if [ "$ready" != "1" ]; then
   exit 1
 fi
 CUMULUS_E2E_SUPABASE=1 node --test test/e2e-supabase.test.mjs
+
+# cid mode, the default and what the hosted function runs: the same function
+# under Deno on this host, against the same local PostgREST and Storage, with
+# the Cumulus ID issuer that test/e2e-cid.test.mjs serves on 127.0.0.1:9100.
+(
+  cd supabase/functions/drive
+  env -i PATH="$PATH" HOME="$HOME" DENO_DIR="${DENO_DIR:-$HOME/.cache/deno}" \
+    CUMULUS_AUTH_MODE=cid \
+    CID_ISSUER=http://127.0.0.1:9100/realms/cumulus \
+    CUMULUS_REST_URL="${API_URL}/rest/v1" \
+    CUMULUS_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY}" \
+    CUMULUS_S3_ENDPOINT="${API_URL}/storage/v1/s3" \
+    CUMULUS_S3_ACCESS_KEY="${S3_PROTOCOL_ACCESS_KEY_ID}" \
+    CUMULUS_S3_SECRET_KEY="${S3_PROTOCOL_ACCESS_KEY_SECRET}" \
+    CUMULUS_S3_REGION="${S3_PROTOCOL_REGION}" \
+    CUMULUS_KMS_MASTER_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+    CUMULUS_SHARE_SECRET=local-stack-share-secret \
+    CUMULUS_PUBLIC_BASE_URL=https://cloud.cumuluscloud.app \
+    npx --yes deno@2.9.6 run --allow-net --allow-env index.ts
+) > /tmp/cumulus-cid-function.log 2>&1 &
+cidpid=$!
+ready=0
+i=0
+while [ "$i" -lt 60 ]; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000/healthz" || true)
+  if [ "$code" = "200" ]; then
+    ready=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 2
+done
+if [ "$ready" != "1" ]; then
+  echo "cid-mode Drive function did not become ready"
+  tail -n 80 /tmp/cumulus-cid-function.log || true
+  exit 1
+fi
+if ! CUMULUS_E2E_CID=1 node --test test/e2e-cid.test.mjs; then
+  tail -n 80 /tmp/cumulus-cid-function.log || true
+  exit 1
+fi
