@@ -22,7 +22,9 @@ The printed SHA is the deploy commit. Build the Worker and the function from tha
 
 The project-wide custom access token hook stays **off**. Do not enable Authentication → Hooks → Custom Access Token hook. Do not recreate `public.custom_access_token_hook`.
 
-The Edge Function verifies the JWT, then reads `cumulus.identities.cid` for that `sub`. `cumulus.current_cid()` does the same lookup for row level security. Login does not touch the identities table. A failure there fails the Drive call only.
+The Edge Function authenticates Drive calls itself, and the default is Cumulus ID (`CUMULUS_AUTH_MODE=cid`). It checks the Cumulus ID access token against the issuer's JWKS (ES256, `typ: at+jwt`, `iss`, `aud` in `CID_AUDIENCES`, `exp`), then asks the issuer's `/userinfo` that the session is live and names the same `sub`. The verified `sub` is the cid. PostgREST does not accept Cumulus ID tokens, so in this mode the function reads and writes `cumulus` metadata as `service_role` and filters every query by the tenant row whose `cid` matches. Row level security does not apply to those calls; the function's own checks are the boundary. The quota trigger still runs.
+
+`CUMULUS_AUTH_MODE=supabase` is the older opt-in mode. The function then verifies a Supabase Auth JWT, reads `cumulus.identities.cid` for that `sub`, and calls PostgREST as the user so row level security applies. `cumulus.current_cid()` does the same lookup. Either way, login does not touch the identities table, and a failure there fails the Drive call only.
 
 What the hook would affect if it were enabled is documented in `cloud/README.md`. Short version: it runs for every token this Auth project issues, and an exception rejects those logins.
 
@@ -47,10 +49,10 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 3. **Hook.** In the Auth settings, the custom access token hook is disabled. The function from step 1's older migration is dropped by step 2. Leave it dropped.
 
-4. **Identity rows.** For each Drive user, as `service_role` or the SQL editor (not as the user):
+4. **Tenant rows.** For each Drive user, as `service_role` or the SQL editor (not as the user):
 
-   - `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`
-   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`
+   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`, where `cid` is the person's Cumulus ID subject (`cid_<uuid>`).
+   - Only with `CUMULUS_AUTH_MODE=supabase`: also `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`.
 
    `authenticated` cannot insert or update those tenant rows, including `max_bytes` and `used_bytes`. The quota trigger updates `used_bytes` because it is `security definer`.
 
@@ -67,10 +69,14 @@ If a custom access token hook is already enabled, turn it off before step 1. The
    | Name | What it is |
    | --- | --- |
    | `CUMULUS_REST_URL` | Project REST URL, no trailing slash. The function appends PostgREST paths. |
-   | `CUMULUS_ANON_KEY` | Project anon key. Sent as `apikey` on user-scoped PostgREST calls. |
-   | `CUMULUS_SERVICE_ROLE_KEY` | Service role key. Share downloads only. |
-   | `CUMULUS_JWKS_URL` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1/.well-known/jwks.json` |
-   | `CUMULUS_JWT_ISSUER` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` |
+   | `CUMULUS_SERVICE_ROLE_KEY` | Service role key. Every metadata call in `cid` mode, and share downloads in both modes. |
+   | `CUMULUS_AUTH_MODE` | Optional. `cid` (default) or `supabase`. Any other value stops the function at boot. |
+   | `CID_ISSUER` | Optional. Defaults to `https://id.cumuluscloud.app/realms/cumulus`. |
+   | `CID_AUDIENCES` | Optional. Comma-separated client ids whose access tokens Drive accepts. Defaults to `cumulus-cloud,cumulus-exchange,cumulus-mail`. |
+   | `CID_JWKS_URL` | Optional. Defaults to `<CID_ISSUER>/protocol/openid-connect/certs`. |
+   | `CUMULUS_ANON_KEY` | `supabase` mode only. Project anon key, sent as `apikey` on user-scoped PostgREST calls. |
+   | `CUMULUS_JWKS_URL` | `supabase` mode only. `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1/.well-known/jwks.json` |
+   | `CUMULUS_JWT_ISSUER` | `supabase` mode only. `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` |
    | `CUMULUS_S3_ENDPOINT` | Storage S3 endpoint for the project. |
    | `CUMULUS_S3_SIGN_HOST` | Host header the S3 signature must use, when it differs from the endpoint host. |
    | `CUMULUS_S3_ACCESS_KEY` | Storage S3 access key id. |
@@ -142,7 +148,7 @@ curl -fsS -D - -o /dev/null "https://cloud.cumuluscloud.app/"
 
 Expect `/api/healthz` to return `{"ok":true,"service":"cumulus-drive"}`. The allowlisted preflight returns 204 and `access-control-allow-origin: https://cloud.cumuluscloud.app`. The other origin returns 403 and no allow-origin header. `/` returns the console HTML.
 
-Then, with a real user JWT whose `sub` is in `cumulus.identities`: upload, download, and a direct `POST` to `/storage/v1/object/cumulus-drive/...` with that same JWT. The Storage call must be denied. `GET /api/v1/usage` with `x-cumulus-purpose: drive.read` must succeed, and a `PATCH` of `cumulus.tenants.max_bytes` as that user must be denied.
+Then, with a real Cumulus ID access token whose cid has a tenant row (or, in `supabase` mode, a Supabase user JWT whose `sub` is in `cumulus.identities`): list, upload, download, and a direct `POST` to `/storage/v1/object/cumulus-drive/...` with that same token. The Storage call must be denied. `GET /api/v1/usage` with `x-cumulus-purpose: drive.read` must succeed, and a `PATCH` of `cumulus.tenants.max_bytes` as that user must be denied.
 
 ## Rollback
 
