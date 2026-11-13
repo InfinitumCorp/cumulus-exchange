@@ -32,7 +32,7 @@ import { bearer, genericOAuth } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
-import { Pool } from "pg";
+import { createPgPool } from "../pg-pool";
 import { ensureDbReady, getPglite } from "../db";
 import { CID_SCOPES, cidConfig, cidEndpoints, cidUserInfo } from "./cumulus-id.ts";
 import { verifyCidIdToken } from "./cumulus-id-token.server.ts";
@@ -122,7 +122,7 @@ const databaseUrl = env("DATABASE_URL");
 // schema from `migrations/auth/0001_auth.sql`, copied into `migrations/` when
 // the app turns sign-in on.
 const database = databaseUrl
-  ? new Pool({ connectionString: databaseUrl })
+  ? createPgPool(databaseUrl)
   : { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
 
 /** Session token cookie name — also read by the live-preview popup completion page. */
@@ -160,7 +160,10 @@ const cumulusIdPlugin = authConfigured
           try {
             return cidUserInfo(await verifyCidIdToken(cid, tokens.idToken));
           } catch (error) {
-            console.error("[cumulus-id] ID token rejected", error instanceof Error ? error.message : error);
+            console.error(
+              "[cumulus-id] ID token rejected",
+              error instanceof Error ? error.message : error,
+            );
             return null;
           }
         },
@@ -168,78 +171,96 @@ const cumulusIdPlugin = authConfigured
     })
   : null;
 
-export const auth = betterAuth({
-  baseURL,
-  // Deployed apps inject BETTER_AUTH_SECRET. Preview: process-stable secret on
-  // globalThis so HMR doesn't invalidate PGLite-backed sessions (see above).
-  secret: env("BETTER_AUTH_SECRET") ?? previewAuthSecret(),
-  database,
+function createAuth() {
+  return betterAuth({
+    baseURL,
+    // Deployed apps inject BETTER_AUTH_SECRET. Preview: process-stable secret on
+    // globalThis so HMR doesn't invalidate PGLite-backed sessions (see above).
+    secret: env("BETTER_AUTH_SECRET") ?? previewAuthSecret(),
+    database,
 
-  // CSRF / origin check for credentialed auth POSTs (sign-in, sign-out, …).
-  // See `trustedOrigins` construction above — must cover live preview hosts AND
-  // local loopback variants, or clients get "Invalid origin".
-  trustedOrigins,
+    // CSRF / origin check for credentialed auth POSTs (sign-in, sign-out, …).
+    // See `trustedOrigins` construction above — must cover live preview hosts AND
+    // local loopback variants, or clients get "Invalid origin".
+    trustedOrigins,
 
-  // Encrypt Cumulus://ID tokens at rest, and treat Cumulus://ID as the trusted
-  // first-party identity: "sign in" and "create" are the same CID, so they link
-  // to one user instead of failing with `account_not_linked`.
-  account: {
-    encryptOAuthTokens: true,
-    accountLinking: {
-      enabled: true,
-      trustedProviders: [
-        ...SIGN_IN_PROVIDERS.map((p) => p.providerId),
-        GATE_PROVIDER_ID,
-      ],
-      requireLocalEmailVerified: false,
+    // Encrypt Cumulus://ID tokens at rest, and treat Cumulus://ID as the trusted
+    // first-party identity: "sign in" and "create" are the same CID, so they link
+    // to one user instead of failing with `account_not_linked`.
+    account: {
+      encryptOAuthTokens: true,
+      accountLinking: {
+        enabled: true,
+        trustedProviders: [...SIGN_IN_PROVIDERS.map((p) => p.providerId), GATE_PROVIDER_ID],
+        requireLocalEmailVerified: false,
+      },
     },
-  },
 
-  // Cache the session in the short-lived signed `session_data` cookie so reads
-  // (incl. the client's `/get-session`) skip the DB — this shrinks the "loading"
-  // window and reduces auth flicker. See the `auth` skill for the full
-  // flicker-prevention guidance (gate on `isPending`; SSR the session).
-  session: { cookieCache: { enabled: true, maxAge: 300 } },
+    // Cache the session in the short-lived signed `session_data` cookie so reads
+    // (incl. the client's `/get-session`) skip the DB — this shrinks the "loading"
+    // window and reduces auth flicker. See the `auth` skill for the full
+    // flicker-prevention guidance (gate on `isPending`; SSR the session).
+    session: { cookieCache: { enabled: true, maxAge: 300 } },
 
-  // No local email/password: Cumulus ID is the only way people sign in.
-  emailAndPassword: { enabled: false },
+    // No local email/password: Cumulus ID is the only way people sign in.
+    emailAndPassword: { enabled: false },
 
-  // `__Host-` prefixed cookies: the browser REFUSES any same-named cookie that
-  // carries a `Domain` attribute, so a sibling `*.grok.me` app cannot "toss" a
-  // `Domain=.grok.me` session cookie onto this app. `__Host-` requires Secure +
-  // Path=/ + no Domain; Better Auth otherwise uses `__Secure-` (which permits
-  // Domain), so we drop its auto prefix (`useSecureCookies: false`) and set
-  // Secure + the names ourselves. (Browsers allow Secure cookies on
-  // `http://localhost`, so local dev still works.)
-  advanced: {
-    useSecureCookies: false,
-    defaultCookieAttributes: { secure: true, sameSite: "lax", path: "/" },
-    cookies: {
-      session_token: { name: SESSION_TOKEN_COOKIE },
-      session_data: { name: "__Host-grok-auth.session_data" },
-      account_data: { name: "__Host-grok-auth.account_data" },
-      dont_remember: { name: "__Host-grok-auth.dont_remember" },
+    // `__Host-` prefixed cookies: the browser REFUSES any same-named cookie that
+    // carries a `Domain` attribute, so a sibling `*.grok.me` app cannot "toss" a
+    // `Domain=.grok.me` session cookie onto this app. `__Host-` requires Secure +
+    // Path=/ + no Domain; Better Auth otherwise uses `__Secure-` (which permits
+    // Domain), so we drop its auto prefix (`useSecureCookies: false`) and set
+    // Secure + the names ourselves. (Browsers allow Secure cookies on
+    // `http://localhost`, so local dev still works.)
+    advanced: {
+      useSecureCookies: false,
+      defaultCookieAttributes: { secure: true, sameSite: "lax", path: "/" },
+      cookies: {
+        session_token: { name: SESSION_TOKEN_COOKIE },
+        session_data: { name: "__Host-grok-auth.session_data" },
+        account_data: { name: "__Host-grok-auth.account_data" },
+        dont_remember: { name: "__Host-grok-auth.dont_remember" },
+      },
     },
-  },
 
-  plugins: [
-    gateIdentitySessions(),
+    plugins: [
+      gateIdentitySessions(),
 
-    // Cumulus ID (when auth is on).
-    ...(cumulusIdPlugin ? [cumulusIdPlugin] : []),
+      // Cumulus ID (when auth is on).
+      ...(cumulusIdPlugin ? [cumulusIdPlugin] : []),
 
-    // Accept `Authorization: Bearer <session-token>` as an alternative to the
-    // cookie. Needed for the LIVE PREVIEW: the app runs in an embedded iframe
-    // where cookies are partitioned, so after popup sign-in it authenticates with
-    // a bearer token instead (see `client.ts` / the `auth` skill). The hook only
-    // fires when an Authorization header is present, so the cookie path
-    // (deployed apps) is unaffected.
-    bearer(),
+      // Accept `Authorization: Bearer <session-token>` as an alternative to the
+      // cookie. Needed for the LIVE PREVIEW: the app runs in an embedded iframe
+      // where cookies are partitioned, so after popup sign-in it authenticates with
+      // a bearer token instead (see `client.ts` / the `auth` skill). The hook only
+      // fires when an Authorization header is present, so the cookie path
+      // (deployed apps) is unaffected.
+      bearer(),
 
-    // Bridges Better Auth's Set-Cookie into TanStack Start responses. MUST be
-    // last so it runs after every other plugin's hooks.
-    tanstackStartCookies(),
-  ],
+      // Bridges Better Auth's Set-Cookie into TanStack Start responses. MUST be
+      // last so it runs after every other plugin's hooks.
+      tanstackStartCookies(),
+    ],
+  });
+}
+
+type Auth = ReturnType<typeof createAuth>;
+let authInstance: Auth | undefined;
+
+/**
+ * Better Auth is built on first use, not at import. Its init fetches the
+ * Cumulus ID discovery document and checks the database, and Cloudflare Workers
+ * refuse network I/O at module scope: built at import, both sign-in providers
+ * would be skipped on every fresh Worker instance. Every caller reaches `auth`
+ * from inside a request handler, so the first property access is in a request.
+ */
+export function getAuth(): Auth {
+  authInstance ??= createAuth();
+  return authInstance;
+}
+
+export const auth: Auth = new Proxy({} as Auth, {
+  get: (_target, prop) => Reflect.get(getAuth(), prop),
 });
 
 export function readSessionToken(): string | null {

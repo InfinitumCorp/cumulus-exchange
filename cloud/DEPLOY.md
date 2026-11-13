@@ -90,33 +90,46 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 ## Worker build and deploy
 
-`cloud/worker/wrangler.toml` is the only Wrangler config. It has no `account_id` and no KV, D1, or R2 bindings. `wrangler login` on the operator machine selects the account. Do not paste an account id into the file.
+The `cumulus-cloud` Worker is the whole console: the TanStack Start server built by Nitro for Cloudflare (`NITRO_PRESET=cloudflare-module`), with its browser files as Worker assets. It serves the console pages, runs "Sign in with Cumulus ID" (Better Auth at `/api/auth/*`), and keeps sessions in the Supabase project's Postgres. Only Drive API calls go to the Edge Function: `/api/drive/v1/*` and `/api/healthz` on any host, and `/v1/*` plus `/healthz` on `cloud.cumuluscloud.app` (share links). Everything stays on the free Workers and Supabase plans; the compressed upload is about 1.4 MB, under the free plan's 3 MB Worker limit.
 
-`SUPABASE_FUNCTION_URL` is a Worker secret, not a var in the toml:
+`cloud/worker/wrangler.toml` is the only Wrangler config. It has no `account_id` and no KV, D1, or R2 bindings. `wrangler login` on the operator machine selects the account. Do not paste an account id into the file. It uploads the Nitro output in `.output/` as built (`no_bundle`), so always build first.
 
-```sh
-cd cloud/worker
-npx wrangler secret put SUPABASE_FUNCTION_URL
-```
+1. **Console database.** The console's own tables (Better Auth `user`, `session`, `account`, `verification`, and the session-store Drive tables) go in the same Supabase project, schema `public`. From the deploy commit, with the project's Postgres connection string:
 
-Value: `https://ivqiskeziohbbtkcvlun.supabase.co/functions/v1/drive`
+   ```sh
+   DATABASE_URL='<transaction pooler URL, port 6543>' npm run db:migrate
+   ```
 
-Optional secrets, only to override the defaults: `CUMULUS_CLOUD_HOST`, `CUMULUS_ID_HOST`, `CUMULUS_MAIL_HOST`, `CUMULUS_CORS_ORIGINS`. The default allowlist is exactly `https://id.cumuluscloud.app`, `https://cloud.cumuluscloud.app`, and `https://mail.cumuluscloud.app`. A `*` value makes the proxy return 503.
+   Use Supabase's transaction pooler (Settings → Database → Connection string → Transaction, port 6543). On Workers every query opens its own connection (`src/lib/pg-pool.ts`), and the pooler keeps those cheap. `migrations/0004_console_rls.sql` turns on row level security with no policies for every console table, so `anon` and `authenticated` cannot read sessions or tokens through the Data API. The console connects as the owner and is not affected. Do not add policies to those tables.
 
-Build the Vite client, then publish the Worker. The placeholder `cloud/worker/assets/index.html` is replaced by the client build. Do not deploy the placeholder as the console.
+2. **Worker secrets, by name.** Set each with `npx wrangler secret put <NAME> --config cloud/worker/wrangler.toml`. Do not commit the values.
 
-```sh
-npm ci
-npm run build
-rm -rf cloud/worker/assets
-mkdir -p cloud/worker/assets
-cp -a dist/client/. cloud/worker/assets/
-npx wrangler deploy --config cloud/worker/wrangler.toml
-```
+   | Name | What it is |
+   | --- | --- |
+   | `DATABASE_URL` | The same transaction pooler URL as step 1. |
+   | `BETTER_AUTH_SECRET` | Random, at least 32 characters (`openssl rand -base64 48`). Signs session cookies and encrypts stored Cumulus ID tokens. Changing it signs everyone out. |
+   | `BETTER_AUTH_URL` | `https://cloud.cumuluscloud.app`. The sign-in callback is `<this>/api/auth/callback/cumulus-id`. |
+   | `VITE_AUTH_ENABLED` | `true` |
+   | `SUPABASE_FUNCTION_URL` | `https://ivqiskeziohbbtkcvlun.supabase.co/functions/v1/drive` |
 
-If `dist/client` is not where this Vite build wrote `index.html`, copy that client directory instead. `wrangler deploy` bundles `cloud/worker/src/index.mjs` and uploads `./assets`. There is no second Wrangler config.
+   Optional, only to override the defaults: `CID_ISSUER`, `CID_CLIENT_ID`, `CUMULUS_CLOUD_HOST`, `CUMULUS_ID_HOST`, `CUMULUS_MAIL_HOST`, `CUMULUS_CORS_ORIGINS`. The default Drive CORS allowlist is exactly `https://id.cumuluscloud.app`, `https://cloud.cumuluscloud.app`, and `https://mail.cumuluscloud.app`. A `*` value makes the proxy return 503.
 
-The Worker serves those assets for console routes. It proxies `/api/*` on any host, and `/v1/*` plus `/healthz` when the host is `cloud.cumuluscloud.app`, to `SUPABASE_FUNCTION_URL`. It forwards `Authorization` and `x-cumulus-purpose` (and `x-cumulus-tenant`, `content-type`, `accept`). It strips hop-by-hop headers. An `Origin` outside the allowlist is 403 and is not proxied. A missing function URL is 503.
+   Cumulus ID must list `https://cloud.cumuluscloud.app/api/auth/callback/cumulus-id` and `.../callback/cumulus-id-create` as redirect URIs for the `cumulus-cloud` client (cumulus-id `src/clients.ts`). Sign-in fails with a redirect error until it does.
+
+3. **Build and deploy.**
+
+   ```sh
+   npm ci
+   NITRO_PRESET=cloudflare-module npx vite build
+   npx wrangler deploy --dry-run --config cloud/worker/wrangler.toml
+   npx wrangler deploy --config cloud/worker/wrangler.toml
+   ```
+
+   Build with `npx vite build`, not `npm run build`: the npm script also runs `db:migrate`, which belongs to step 1 and needs `DATABASE_URL` in the shell. The build also writes `.output/server/wrangler.json` and `.wrangler/deploy/config.json` with a generated Worker name. Ignore them; pass `--config cloud/worker/wrangler.toml` every time so the Worker stays `cumulus-cloud`.
+
+The cloud Drive view gets its bearer from `GET /api/drive/cid-token`: the signed-in person's Cumulus ID access token, which Better Auth stored encrypted at sign-in and refreshes when it has expired. The Edge Function verifies that token (`CUMULUS_AUTH_MODE=cid`). The proxy forwards `Authorization` and `x-cumulus-purpose` (and `x-cumulus-tenant`, `content-type`, `accept`). It strips hop-by-hop headers. An `Origin` outside the allowlist is 403 and is not proxied. A missing function URL is 503.
+
+`cloud/worker/assets/` and the static-assets mode of `cloud/worker/src/index.mjs` (`handleRequest`) are kept for the proxy's tests. They are not deployed.
 
 ## DNS
 
@@ -144,11 +157,15 @@ curl -sS -D - -o /dev/null -X OPTIONS "https://cloud.cumuluscloud.app/api/health
   -H "origin: https://evil.example" \
   -H "access-control-request-method: GET"
 curl -fsS -D - -o /dev/null "https://cloud.cumuluscloud.app/"
+curl -fsS "https://cloud.cumuluscloud.app/api/auth/get-session"
+curl -sS -o /dev/null -w '%{http_code}\n' "https://cloud.cumuluscloud.app/api/drive/cid-token"
 ```
 
-Expect `/api/healthz` to return `{"ok":true,"service":"cumulus-drive"}`. The allowlisted preflight returns 204 and `access-control-allow-origin: https://cloud.cumuluscloud.app`. The other origin returns 403 and no allow-origin header. `/` returns the console HTML.
+Expect `/api/healthz` to return `{"ok":true,"service":"cumulus-drive"}`. The allowlisted preflight returns 204 and `access-control-allow-origin: https://cloud.cumuluscloud.app`. The other origin returns 403 and no allow-origin header. `/` returns the console HTML. `/api/auth/get-session` returns `null` (no session yet, and no 500). `/api/drive/cid-token` returns 401 until someone signs in.
 
-Then, with a real Cumulus ID access token whose cid has a tenant row (or, in `supabase` mode, a Supabase user JWT whose `sub` is in `cumulus.identities`): list, upload, download, and a direct `POST` to `/storage/v1/object/cumulus-drive/...` with that same token. The Storage call must be denied. `GET /api/v1/usage` with `x-cumulus-purpose: drive.read` must succeed, and a `PATCH` of `cumulus.tenants.max_bytes` as that user must be denied.
+Then sign in at `https://cloud.cumuluscloud.app/login` with Cumulus ID and open Drive. The Drive view should list files and show usage; `GET /api/drive/cid-token` in that browser returns a token whose `aud` is `cumulus-cloud`.
+
+Then, with a real Cumulus ID access token whose cid has a tenant row (or, in `supabase` mode, a Supabase user JWT whose `sub` is in `cumulus.identities`): list, upload, download, and a direct `POST` to `/storage/v1/object/cumulus-drive/...` with that same token. The Storage call must be denied. `GET /api/drive/v1/usage` with `x-cumulus-purpose: drive.read` must succeed, and a `PATCH` of `cumulus.tenants.max_bytes` as that user must be denied.
 
 ## Rollback
 

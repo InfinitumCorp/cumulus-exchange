@@ -1,16 +1,22 @@
-# Free Cloudflare Worker for the Cumulus console and Drive proxy.
+# The cumulus-cloud Worker: the console's own server build (TanStack Start on
+# Nitro, NITRO_PRESET=cloudflare-module), which also proxies Drive API calls to
+# the Supabase Edge Function. Build first (cloud/DEPLOY.md), then deploy with
+# `npx wrangler deploy --config cloud/worker/wrangler.toml`.
 # Do not add an account identifier, KV, D1, or R2. The operator's login
 # supplies the account at deploy time. Secrets are set with `wrangler secret put`.
 name = "cumulus-cloud"
-main = "src/index.mjs"
+main = "../../.output/server/index.mjs"
 compatibility_date = "2026-11-08"
+# Worker vars and secrets reach process.env; pg connects over TCP sockets.
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
+# Nitro already bundled the server into .output/server; upload it as is.
+no_bundle = true
+rules = [{ type = "ESModule", globs = ["**/*.mjs", "**/*.js"] }]
 
 [assets]
-directory = "./assets"
+directory = "../../.output/public"
 binding = "ASSETS"
-run_worker_first = true
-not_found_handling = "single-page-application"
 
 # Global users run on US servers (Ashburn, Virginia); Russia is served by the ru.* copies on Yandex Cloud.
 [placement]

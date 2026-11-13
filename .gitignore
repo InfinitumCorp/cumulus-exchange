@@ -12,3 +12,7 @@ dist
 !.env.example
 cloud/supabase/.temp
 cloud/supabase/.branches
+
+# Cloudflare Worker build (NITRO_PRESET=cloudflare-module) and wrangler state
+.output/
+.wrangler/
