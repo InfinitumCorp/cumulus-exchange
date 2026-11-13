@@ -378,8 +378,9 @@ async function shared(url: URL) {
   const shares = await rest(serviceKey, serviceKey, `/shares?id=eq.${encodeURIComponent(shareId)}&select=tenant_id,bucket,object_key,expires_at,revoked_at`);
   const share = shares?.[0];
   if (!share || share.revoked_at || Date.parse(share.expires_at) !== exp * 1000) throw new ApiError(403, "AccessDenied", "Share link is not valid");
-  const objects = await rest(serviceKey, serviceKey, `/objects?tenant_id=eq.${share.tenant_id}&bucket=eq.${encodeURIComponent(share.bucket)}&object_key=eq.${encodeURIComponent(share.object_key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256`);
-  if (!objects?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
+  const objects = await rest(serviceKey, serviceKey, `/objects?tenant_id=eq.${share.tenant_id}&bucket=eq.${encodeURIComponent(share.bucket)}&object_key=eq.${encodeURIComponent(share.object_key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256,trashed_at`);
+  // A file in the trash stops serving its links; restoring it brings them back.
+  if (!objects?.[0] || objects[0].trashed_at) throw new ApiError(404, "NoSuchKey", "Object not found");
   return await plaintextResponse(share.tenant_id, objects[0]);
 }
 

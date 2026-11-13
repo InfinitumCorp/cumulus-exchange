@@ -77,6 +77,16 @@ test(
     const shared = await fetch(`${DRIVE}${shareUrl.pathname}${shareUrl.search}`);
     assert.equal(shared.status, 200);
     assert.equal(await shared.text(), "hello-from-ada");
+    const trashed = await parityCall(adaToken, "drive.write", { op: "trash", key: "hello.txt" });
+    assert.equal(trashed.status, 200, trashed.body);
+    const trashedLink = await fetch(`${DRIVE}${shareUrl.pathname}${shareUrl.search}`);
+    assert.equal(trashedLink.status, 404);
+    assert.equal((await trashedLink.text()).includes("hello-from-ada"), false);
+    const restored = await parityCall(adaToken, "drive.write", { op: "restore", key: "hello.txt" });
+    assert.equal(restored.status, 200, restored.body);
+    const restoredLink = await fetch(`${DRIVE}${shareUrl.pathname}${shareUrl.search}`);
+    assert.equal(restoredLink.status, 200);
+    assert.equal(await restoredLink.text(), "hello-from-ada");
 
     const over = await drive("PUT", "/v1/objects/docs/big.bin", adaToken, "drive.write", Buffer.alloc(30));
     assert.equal(over.status, 403, over.body);
