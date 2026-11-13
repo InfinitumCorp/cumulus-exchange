@@ -43,7 +43,7 @@ Use the SQL editor or the Supabase CLI against the free project only when a pers
 
 If a custom access token hook is already enabled, turn it off before step 1. The migration drops that function. An enabled hook that calls a missing function rejects every login on the project.
 
-1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket.
+1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket. Then `cloud/supabase/migrations/20261113210000_drive_parity.sql`: additive columns on `cumulus.objects` (`starred`, `trashed_at`, `preview_class`, `sealed_name`) and the `cumulus.activity` table, with row level security like the other tables. The console's star, trash, restore, photos and activity views need it.
 
    After those migrations, add `cumulus` to the project's Exposed schemas (Settings → API). Keep any schemas already listed (`public`, `graphql_public`, and `eon` on this project). Equivalent SQL:
 
@@ -75,29 +75,35 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
    `--no-verify-jwt` matches `cloud/supabase/config.toml`. The function verifies the JWT itself.
 
-6. **Function secrets, by name.** Set each with `supabase secrets set --project-ref ivqiskeziohbbtkcvlun`. Do not commit the values.
+6. **Function secrets, by name.** Set each with `supabase secrets set --project-ref ivqiskeziohbbtkcvlun NAME=value`, or in the dashboard under Edge Functions → Secrets. Do not commit the values. Supabase gives every Edge Function `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`, and the function falls back to them, so the REST URL and the keys need no secret of their own.
+
+   Required:
 
    | Name | What it is |
    | --- | --- |
-   | `CUMULUS_REST_URL` | Project REST URL, no trailing slash. The function appends PostgREST paths. |
-   | `CUMULUS_SERVICE_ROLE_KEY` | Service role key. Every metadata call in `cid` mode, and share downloads in both modes. |
-   | `CUMULUS_AUTH_MODE` | Optional. `cid` (default) or `supabase`. Any other value stops the function at boot. |
-   | `CID_ISSUER` | Optional. Defaults to `https://id.cumuluscloud.app/realms/cumulus`. |
-   | `CID_AUDIENCES` | Optional. Comma-separated client ids whose access tokens Drive accepts. Defaults to `cumulus-cloud,cumulus-exchange,cumulus-mail`. |
-   | `CID_JWKS_URL` | Optional. Defaults to `<CID_ISSUER>/protocol/openid-connect/certs`. |
-   | `CUMULUS_ANON_KEY` | `supabase` mode only. Project anon key, sent as `apikey` on user-scoped PostgREST calls. |
-   | `CUMULUS_JWKS_URL` | `supabase` mode only. `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1/.well-known/jwks.json` |
-   | `CUMULUS_JWT_ISSUER` | `supabase` mode only. `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` |
-   | `CUMULUS_S3_ENDPOINT` | Storage S3 endpoint for the project. |
-   | `CUMULUS_S3_SIGN_HOST` | Host header the S3 signature must use, when it differs from the endpoint host. |
-   | `CUMULUS_S3_ACCESS_KEY` | Storage S3 access key id. |
-   | `CUMULUS_S3_SECRET_KEY` | Storage S3 secret. |
-   | `CUMULUS_S3_REGION` | Storage S3 region. |
-   | `CUMULUS_KMS_MASTER_KEY` | 32 bytes, base64. Not a Supabase key. |
-   | `CUMULUS_SHARE_SECRET` | HMAC secret for share links. |
-   | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app` |
-   | `CUMULUS_FREE_MAX_BYTES` | Optional. Quota of a tenant created on first use. Default 104857600 (100 MiB). |
-   | `CUMULUS_FREE_MAX_OBJECTS` | Optional. Object cap of a tenant created on first use. Default 10000. |
+   | `CUMULUS_S3_ENDPOINT` | The project's Storage S3 endpoint, from Storage → Settings → S3 Connection. |
+   | `CUMULUS_S3_REGION` | The region shown there. This project is in `eu-west-1`. |
+   | `CUMULUS_S3_ACCESS_KEY` | Access key id of an S3 access key created on that page. |
+   | `CUMULUS_S3_SECRET_KEY` | Its secret, shown once when the key is created. |
+   | `CUMULUS_KMS_MASTER_KEY` | 32 random bytes, base64 (`openssl rand -base64 32`). Wraps every file's data key: losing it makes stored files unreadable, so keep a copy outside Supabase. |
+   | `CUMULUS_SHARE_SECRET` | HMAC secret for share links (`openssl rand -hex 32`). Changing it invalidates links already handed out. |
+   | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app`, the host share links point at. |
+
+   Optional:
+
+   | Name | What it is |
+   | --- | --- |
+   | `CUMULUS_AUTH_MODE` | `cid` (default) or `supabase`. Any other value stops the function at boot. |
+   | `CID_ISSUER` | Defaults to `https://id.cumuluscloud.app/realms/cumulus`. |
+   | `CID_AUDIENCES` | Comma-separated client ids whose access tokens Drive accepts. Defaults to `cumulus-cloud,cumulus-exchange,cumulus-mail`. |
+   | `CID_JWKS_URL` | Defaults to `<CID_ISSUER>/protocol/openid-connect/certs`. |
+   | `CUMULUS_FREE_MAX_BYTES` | Quota of a tenant created on first use. Default 104857600 (100 MiB). |
+   | `CUMULUS_FREE_MAX_OBJECTS` | Object cap of a tenant created on first use. Default 10000. |
+   | `CUMULUS_S3_SIGN_HOST` | Host header the S3 signature must use, only when it differs from the endpoint host. |
+   | `CUMULUS_REST_URL` | Defaults to `$SUPABASE_URL/rest/v1`. |
+   | `CUMULUS_SERVICE_ROLE_KEY` | Defaults to `SUPABASE_SERVICE_ROLE_KEY`. Used for every metadata call in `cid` mode and for share downloads. |
+   | `CUMULUS_ANON_KEY` | `supabase` mode only. Defaults to `SUPABASE_ANON_KEY`. |
+   | `CUMULUS_JWKS_URL`, `CUMULUS_JWT_ISSUER` | `supabase` mode only. Default to the project's own Auth (`$SUPABASE_URL/auth/v1`). |
 
    Do not set `CUMULUS_ALLOW_SUPABASE` on the function. That variable is the local-process override and is not how this deploy is authorized.
 

@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
 import { CID, CidError, cidAudiences, cidIssuer, cidJwksUrl, createCidVerifier } from "./cid.ts";
 import { functionPath } from "./path.ts";
 import { newTenantRow } from "./tenant.ts";
+import { ParityError, SECURITY_REPORT, parseParity, uploadMeta, viewFilter, type UploadMeta } from "./parity.ts";
 
 /**
  * Cumulus Drive on Supabase Edge Functions.
@@ -23,9 +24,9 @@ const FILE_CAP = 50_000_000;
 const STORAGE_BUCKET = "cumulus-drive";
 const PURPOSES = ["drive.read", "drive.write", "drive.share"];
 const ACTIONS: Record<string, string[]> = {
-  "drive.read": ["object.get", "usage.get"],
-  "drive.write": ["object.put", "object.delete", "usage.get"],
-  "drive.share": ["share.create", "object.get"],
+  "drive.read": ["object.get", "usage.get", "parity.read"],
+  "drive.write": ["object.put", "object.delete", "usage.get", "parity.read", "parity.write"],
+  "drive.share": ["share.create", "object.get", "parity.read"],
 };
 
 class ApiError extends Error {
@@ -63,7 +64,7 @@ const accessKey = Deno.env.get("CUMULUS_S3_ACCESS_KEY") ?? "";
 const secretKey = Deno.env.get("CUMULUS_S3_SECRET_KEY") ?? "";
 const region = Deno.env.get("CUMULUS_S3_REGION") ?? "local";
 const shareSecret = Deno.env.get("CUMULUS_SHARE_SECRET") ?? "";
-const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://drive.cumuluscloud.app").replace(/\/+$/, "");
+const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://cloud.cumuluscloud.app").replace(/\/+$/, "");
 for (const value of [restUrl, s3Endpoint, jwksUrl, issuer]) refuseLive(value);
 const authMode = Deno.env.get("CUMULUS_AUTH_MODE") || "cid";
 if (authMode !== "cid" && authMode !== "supabase") throw new Error("CUMULUS_AUTH_MODE must be cid or supabase");
@@ -92,10 +93,11 @@ Deno.serve(async (req) => {
     const principal = await verify(req);
     if (req.method === "GET" && path === "/v1/usage") return json(200, await usage(principal));
     if (req.method === "POST" && path === "/v1/shares") return json(201, await createShare(principal, await req.json()));
+    if (path === "/v1/parity") return await parity(principal, req, url);
     const located = objectPath(path);
     if (!located) return json(404, { error: { code: "NotFound", message: "Unknown route" } });
     if (req.method === "PUT" && located.key) {
-      return json(200, await putObject(principal, located.bucket, located.key, new Uint8Array(await req.arrayBuffer())));
+      return json(200, await putObject(principal, located.bucket, located.key, new Uint8Array(await req.arrayBuffer()), uploadMeta(req.headers)));
     }
     if (req.method === "GET" && located.key) return await download(principal, located.bucket, located.key);
     if (req.method === "GET" && !located.key) return json(200, await listObjects(principal, located.bucket, url.searchParams.get("view")));
@@ -202,7 +204,7 @@ async function usage(principal: Principal) {
   return { usedBytes: Number(row.used_bytes), maxBytes: Number(row.max_bytes), maxFileBytes: FILE_CAP };
 }
 
-async function putObject(principal: Principal, bucket: string, key: string, bytes: Uint8Array) {
+async function putObject(principal: Principal, bucket: string, key: string, bytes: Uint8Array, meta: UploadMeta) {
   requirePurpose(principal, "object.put");
   assertBucket(bucket);
   assertKey(key);
@@ -229,7 +231,9 @@ async function putObject(principal: Principal, bucket: string, key: string, byte
         blob_id: blobId,
         sha256: await sha256(sealed.ciphertext),
         plaintext_sha256: await sha256(bytes),
-        content_type: "application/octet-stream",
+        content_type: meta.contentType,
+        preview_class: meta.previewClass,
+        sealed_name: meta.sealedName,
         envelope_json: JSON.stringify(sealed.envelope),
         created_at: new Date().toISOString(),
       }),
@@ -239,6 +243,7 @@ async function putObject(principal: Principal, bucket: string, key: string, byte
     await s3("DELETE", objectKey).catch(() => undefined);
     throw error;
   }
+  await activity(principal, owner.id, "upload", key);
   return { size: bytes.byteLength, sha256: await sha256(bytes) };
 }
 
@@ -252,13 +257,12 @@ async function download(principal: Principal, bucket: string, key: string) {
   return await plaintextResponse(owner.id, rows[0]);
 }
 
-/** Active objects only. Stars, trash and photos are console parity views that this schema does not store. */
+/** One list view: active (default), trash, starred or photos (see parity.ts viewFilter). */
 async function listObjects(principal: Principal, bucket: string, view: string | null) {
   requirePurpose(principal, "object.get");
   assertBucket(bucket);
   const owner = await tenant(principal);
-  if (view && view !== "active") return { objects: [] };
-  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&select=object_key,size_bytes,content_type,created_at&order=object_key.asc`);
+  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}${viewFilter(view)}&select=object_key,size_bytes,content_type,created_at,starred,trashed_at,preview_class,sealed_name&order=object_key.asc`);
   return { objects: rows ?? [] };
 }
 
@@ -272,6 +276,7 @@ async function deleteObject(principal: Principal, bucket: string, key: string) {
   await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await s3("DELETE", `tenants/${owner.id}/${rows[0].blob_id}`).catch(() => undefined);
+  await activity(principal, owner.id, "delete", key);
 }
 
 async function createShare(principal: Principal, body: { bucket?: string; key?: string; ttlSeconds?: number }) {
@@ -302,7 +307,64 @@ async function createShare(principal: Principal, body: { bucket?: string; key?: 
     }),
   });
   const sig = await hmacHex(text(shareSecret), `${id}.${exp}`);
+  await activity(principal, owner.id, "share", key);
   return { shareId: id, expiresAt: new Date(exp * 1000).toISOString(), url: `${publicBase}/v1/shared?shareId=${encodeURIComponent(id)}&exp=${exp}&sig=${sig}` };
+}
+
+/** Star, trash, restore, versions, activity and security for the console's cloud Drive. */
+async function parity(principal: Principal, req: Request, url: URL) {
+  if (req.method !== "GET" && req.method !== "POST") throw new ApiError(405, "MethodNotAllowed", "Method is not allowed");
+  let body: Record<string, unknown> | null = null;
+  if (req.method === "POST") {
+    try {
+      body = await req.json();
+    } catch {
+      throw new ApiError(400, "InvalidBody", "Body must be JSON");
+    }
+  }
+  let call;
+  try {
+    call = parseParity(req.method, url.searchParams, body);
+  } catch (error) {
+    if (error instanceof ParityError) throw new ApiError(error.status, error.code, error.message);
+    throw error;
+  }
+  const reading = call.op === "activity" || call.op === "security" || call.op === "versions";
+  requirePurpose(principal, reading ? "parity.read" : "parity.write");
+  if (call.op === "security") return json(200, SECURITY_REPORT);
+  if (call.op === "invite") {
+    throw new ApiError(501, "NotImplemented", "Sharing with another Cumulus ID is not available on this Drive yet; use a share link");
+  }
+  const owner = await tenant(principal);
+  if (call.op === "activity") {
+    const events = await rest(principal.db.token, principal.db.key, `/activity?tenant_id=eq.${owner.id}&select=id,action,object_key,at&order=at.desc&limit=50`);
+    return json(200, { events: events ?? [] });
+  }
+  assertBucket(call.bucket);
+  assertKey(call.key);
+  const where = `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(call.bucket)}&object_key=eq.${encodeURIComponent(call.key)}`;
+  const rows = await rest(principal.db.token, principal.db.key, `${where}&select=object_key`);
+  if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
+  if (call.op === "versions") return json(200, { versions: [] });
+  const patch = call.op === "star"
+    ? { starred: call.starred }
+    : { trashed_at: call.op === "trash" ? new Date().toISOString() : null };
+  await rest(principal.db.token, principal.db.key, where, {
+    method: "PATCH",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify(patch),
+  });
+  await activity(principal, owner.id, call.op === "star" ? (call.starred ? "star" : "unstar") : call.op, call.key);
+  return json(200, { ok: true });
+}
+
+/** Best effort: an activity row that fails to write never fails the Drive call. */
+async function activity(principal: Principal, tenantId: string, action: string, objectKey: string | null) {
+  await rest(principal.db.token, principal.db.key, "/activity", {
+    method: "POST",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify({ id: `act_${hex(crypto.getRandomValues(new Uint8Array(8)))}`, tenant_id: tenantId, action, object_key: objectKey, at: new Date().toISOString() }),
+  }).catch((error) => console.error(JSON.stringify({ msg: "activity", err: error instanceof Error ? error.message : "unknown" })));
 }
 
 async function shared(url: URL) {
@@ -316,8 +378,9 @@ async function shared(url: URL) {
   const shares = await rest(serviceKey, serviceKey, `/shares?id=eq.${encodeURIComponent(shareId)}&select=tenant_id,bucket,object_key,expires_at,revoked_at`);
   const share = shares?.[0];
   if (!share || share.revoked_at || Date.parse(share.expires_at) !== exp * 1000) throw new ApiError(403, "AccessDenied", "Share link is not valid");
-  const objects = await rest(serviceKey, serviceKey, `/objects?tenant_id=eq.${share.tenant_id}&bucket=eq.${encodeURIComponent(share.bucket)}&object_key=eq.${encodeURIComponent(share.object_key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256`);
-  if (!objects?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
+  const objects = await rest(serviceKey, serviceKey, `/objects?tenant_id=eq.${share.tenant_id}&bucket=eq.${encodeURIComponent(share.bucket)}&object_key=eq.${encodeURIComponent(share.object_key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256,trashed_at`);
+  // A file in the trash stops serving its links; restoring it brings them back.
+  if (!objects?.[0] || objects[0].trashed_at) throw new ApiError(404, "NoSuchKey", "Object not found");
   return await plaintextResponse(share.tenant_id, objects[0]);
 }
 
@@ -373,7 +436,7 @@ async function s3(method: "PUT" | "GET" | "DELETE", key: string, body?: Uint8Arr
       "x-amz-content-sha256": payloadHash,
       "x-amz-date": amzdate,
     },
-    body: method === "PUT" ? body : undefined,
+    body: method === "PUT" && body ? own(body) : undefined,
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -395,7 +458,7 @@ async function seal(plaintext: Uint8Array, aad: string) {
   const dek = crypto.getRandomValues(new Uint8Array(32));
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const dataKey = await crypto.subtle.importKey("raw", dek, "AES-GCM", false, ["encrypt"]);
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: text(aad) }, dataKey, plaintext));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: text(aad) }, dataKey, own(plaintext)));
   return {
     ciphertext: encrypted.slice(0, -16),
     envelope: { v: 1, alg: "AES-256-GCM", nonce: b64(nonce), tag: b64(encrypted.slice(-16)), wrappedDek: await wrapKey(dek) },
@@ -416,7 +479,7 @@ async function open(ciphertext: Uint8Array, envelope: { v: number; alg: string; 
 async function wrapKey(dek: Uint8Array) {
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const key = await crypto.subtle.importKey("raw", masterKey(), "AES-GCM", false, ["encrypt"]);
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, dek));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, own(dek)));
   return `v1:${b64(concat(concat(nonce, encrypted.slice(-16)), encrypted.slice(0, -16)))}`;
 }
 
@@ -434,7 +497,7 @@ function masterKey() {
 }
 
 async function hmacRaw(key: Uint8Array, value: string) {
-  const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const cryptoKey = await crypto.subtle.importKey("raw", own(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, text(value)));
 }
 
@@ -443,11 +506,16 @@ async function hmacHex(key: Uint8Array, value: string) {
 }
 
 async function sha256(bytes: Uint8Array) {
-  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", own(bytes))));
 }
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+/** Web Crypto and fetch take ArrayBuffer-backed bytes; copy only if a view ever sits on shared memory. */
+function own(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
 }
 
 function text(value: string) {
