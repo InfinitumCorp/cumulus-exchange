@@ -2,21 +2,27 @@
 
 Free Cloudflare Workers in front of the existing free Supabase project. No Docker host, no R2, no KV, no D1, and no paid Supabase or Cloudflare add-on.
 
-Nothing in this repository runs the commands below. CI does not log in to Cloudflare or Supabase, and it does not call project `ivqiskeziohbbtkcvlun`.
+Nothing in this repository runs the commands below. CI does not deploy Drive, does not log in to Supabase, and does not call project `ivqiskeziohbbtkcvlun`. `.github/workflows/auto-deploy.yml` logs in to Cloudflare, but it publishes only `landing/`, not the `cumulus-cloud` Worker.
 
 ## Commit
 
-Deploy the head of branch `cursor/cumulus-supabase-mode-172a` that contains this file, after every job in `.github/workflows/cumulus-drive.yml` is green on that commit.
+Deploy one specific commit on `main`, chosen by its full SHA. Every job in `.github/workflows/cumulus-drive.yml` (`drive tests`, `live Keycloak and Drive`, `local Supabase Auth and Drive`, `cloudflare worker`) must be green on that exact SHA.
+
+That workflow runs only when a push changes `cloud/**` or the workflow file. A `main` commit that changes neither has no `cumulus-drive` run and cannot be the deploy commit. Use the newest `main` commit whose `cumulus-drive` run is green on every job. Check it on the repository's Actions tab, filtered to the `cumulus-drive` workflow and branch `main`. A commit with no run counts as not green.
+
+Do not deploy a feature branch, including `cursor/cumulus-supabase-mode-172a`. That branch was squash-merged into `main` and is stale. It lacks later work on `main` that this deploy ships: the fix that lets the hosted function boot without `CUMULUS_ALLOW_SUPABASE`, the Worker placement in `cloud/worker/wrangler.toml`, and the console's Cumulus ID sign-in in the client build. Its history also contains `168808a`.
 
 Do not deploy `168808a93cafd2b299a9954186edefe832a6d23a`. That commit still installs the project-wide access token hook and still grants `authenticated` write access to `cumulus.tenants`.
 
 ```sh
-git fetch origin cursor/cumulus-supabase-mode-172a
-git checkout cursor/cumulus-supabase-mode-172a
+DEPLOY_SHA=<full SHA of the green main commit>
+git fetch origin main
+git merge-base --is-ancestor "$DEPLOY_SHA" origin/main && echo "on main"
+git checkout --detach "$DEPLOY_SHA"
 git rev-parse HEAD
 ```
 
-The printed SHA is the deploy commit. Build the Worker and the function from that tree.
+Stop if `on main` is not printed. The printed SHA is the deploy commit. Build the Worker and the function from that tree. Record the SHA with the deploy so the rollback steps below have a known previous version.
 
 ## Hook decision
 
