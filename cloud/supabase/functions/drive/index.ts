@@ -63,7 +63,7 @@ const accessKey = Deno.env.get("CUMULUS_S3_ACCESS_KEY") ?? "";
 const secretKey = Deno.env.get("CUMULUS_S3_SECRET_KEY") ?? "";
 const region = Deno.env.get("CUMULUS_S3_REGION") ?? "local";
 const shareSecret = Deno.env.get("CUMULUS_SHARE_SECRET") ?? "";
-const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://drive.cumuluscloud.app").replace(/\/+$/, "");
+const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://cloud.cumuluscloud.app").replace(/\/+$/, "");
 for (const value of [restUrl, s3Endpoint, jwksUrl, issuer]) refuseLive(value);
 const authMode = Deno.env.get("CUMULUS_AUTH_MODE") || "cid";
 if (authMode !== "cid" && authMode !== "supabase") throw new Error("CUMULUS_AUTH_MODE must be cid or supabase");
