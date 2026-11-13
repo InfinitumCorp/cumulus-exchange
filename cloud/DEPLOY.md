@@ -6,13 +6,13 @@ Nothing in this repository runs the commands below. CI does not log in to Cloudf
 
 ## Commit
 
-Deploy the head of branch `cursor/cumulus-supabase-mode-172a` that contains this file, after every job in `.github/workflows/cumulus-drive.yml` is green on that commit.
+Deploy a commit on `main` that contains this file, after every job in `.github/workflows/cumulus-drive.yml` is green on that commit.
 
 Do not deploy `168808a93cafd2b299a9954186edefe832a6d23a`. That commit still installs the project-wide access token hook and still grants `authenticated` write access to `cumulus.tenants`.
 
 ```sh
-git fetch origin cursor/cumulus-supabase-mode-172a
-git checkout cursor/cumulus-supabase-mode-172a
+git fetch origin main
+git checkout main
 git rev-parse HEAD
 ```
 
@@ -22,7 +22,9 @@ The printed SHA is the deploy commit. Build the Worker and the function from tha
 
 The project-wide custom access token hook stays **off**. Do not enable Authentication → Hooks → Custom Access Token hook. Do not recreate `public.custom_access_token_hook`.
 
-The Edge Function verifies the JWT, then reads `cumulus.identities.cid` for that `sub`. `cumulus.current_cid()` does the same lookup for row level security. Login does not touch the identities table. A failure there fails the Drive call only.
+People sign in with Cumulus://ID, not Supabase Auth. By default (`CUMULUS_AUTH_MODE=cid`) the Edge Function verifies the Cumulus://ID access token itself (issuer `https://id.cumuluscloud.app/realms/cumulus`, JWKS `<issuer>/protocol/openid-connect/certs`, then `<issuer>/protocol/openid-connect/userinfo`), takes the verified `sub` as the cid, and reads `cumulus.tenants` for that cid as the service role. Supabase Auth issues no Drive token in this mode, so the hook has nothing to do.
+
+In the opt-in `CUMULUS_AUTH_MODE=supabase` mode the function verifies a Supabase Auth JWT, then reads `cumulus.identities.cid` for that `sub`. `cumulus.current_cid()` does the same lookup for row level security. Login does not touch the identities table. A failure there fails the Drive call only.
 
 What the hook would affect if it were enabled is documented in `cloud/README.md`. Short version: it runs for every token this Auth project issues, and an exception rejects those logins.
 
@@ -47,10 +49,10 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 3. **Hook.** In the Auth settings, the custom access token hook is disabled. The function from step 1's older migration is dropped by step 2. Leave it dropped.
 
-4. **Identity rows.** For each Drive user, as `service_role` or the SQL editor (not as the user):
+4. **Tenant rows.** For each Drive user, as `service_role` or the SQL editor (not as the user):
 
-   - `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`
-   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`
+   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`, where `cid` is the person's Cumulus://ID `sub` (`cid_<uuid>`).
+   - Only for `CUMULUS_AUTH_MODE=supabase`: also `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`. The default mode does not read `cumulus.identities`.
 
    `authenticated` cannot insert or update those tenant rows, including `max_bytes` and `used_bytes`. The quota trigger updates `used_bytes` because it is `security definer`.
 
@@ -67,10 +69,7 @@ If a custom access token hook is already enabled, turn it off before step 1. The
    | Name | What it is |
    | --- | --- |
    | `CUMULUS_REST_URL` | Project REST URL, no trailing slash. The function appends PostgREST paths. |
-   | `CUMULUS_ANON_KEY` | Project anon key. Sent as `apikey` on user-scoped PostgREST calls. |
-   | `CUMULUS_SERVICE_ROLE_KEY` | Service role key. Share downloads only. |
-   | `CUMULUS_JWKS_URL` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1/.well-known/jwks.json` |
-   | `CUMULUS_JWT_ISSUER` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` |
+   | `CUMULUS_SERVICE_ROLE_KEY` | Service role key. Required. In the default mode every metadata call uses it, scoped by the function to the verified cid's tenant; share downloads use it in both modes. |
    | `CUMULUS_S3_ENDPOINT` | Storage S3 endpoint for the project. |
    | `CUMULUS_S3_SIGN_HOST` | Host header the S3 signature must use, when it differs from the endpoint host. |
    | `CUMULUS_S3_ACCESS_KEY` | Storage S3 access key id. |
@@ -79,6 +78,25 @@ If a custom access token hook is already enabled, turn it off before step 1. The
    | `CUMULUS_KMS_MASTER_KEY` | 32 bytes, base64. Not a Supabase key. |
    | `CUMULUS_SHARE_SECRET` | HMAC secret for share links. |
    | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app` |
+
+   Cumulus://ID settings. Leave them unset to use the defaults shown; set them only for a mirror or another client list.
+
+   | Name | Default |
+   | --- | --- |
+   | `CUMULUS_AUTH_MODE` | `cid`. The other value is `supabase`. Anything else stops the function at startup. |
+   | `CID_ISSUER` | `https://id.cumuluscloud.app/realms/cumulus` |
+   | `CID_AUDIENCES` | `cumulus-cloud,cumulus-exchange,cumulus-mail` (client ids whose access tokens are accepted) |
+   | `CID_JWKS_URL` | `<CID_ISSUER>/protocol/openid-connect/certs` |
+
+   Only for `CUMULUS_AUTH_MODE=supabase`:
+
+   | Name | What it is |
+   | --- | --- |
+   | `CUMULUS_ANON_KEY` | Project anon key. Sent as `apikey` on user-scoped PostgREST calls. |
+   | `CUMULUS_JWKS_URL` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1/.well-known/jwks.json` |
+   | `CUMULUS_JWT_ISSUER` | `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` |
+
+   The function does not read `CUMULUS_KEYCLOAK_*`. Those belong to the Node Drive process in `cloud/src/`.
 
    Do not set `CUMULUS_ALLOW_SUPABASE` on the function. That variable is the local-process override and is not how this deploy is authorized.
 
@@ -119,9 +137,9 @@ Zone `cumuluscloud.app` is already on Cloudflare. These records are a dashboard 
 | Name | Record | Target | Proxy |
 | --- | --- | --- | --- |
 | `cloud.cumuluscloud.app` | CNAME `cloud` | The workers.dev hostname `wrangler deploy` prints for `cumulus-cloud`, or a Workers custom domain attached to that Worker | Proxied. Universal SSL on the free plan. |
-| `id.cumuluscloud.app` | Leave unpublished for this free launch | Auth stays at `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` | Do not CNAME `id` at `ivqiskeziohbbtkcvlun.supabase.co`. Supabase custom domains are paid, and that CNAME fails TLS without one. Keycloak, if it is stood up later, is the origin for this name. |
+| `id.cumuluscloud.app` | Cumulus://ID's own record. Not changed by this manifest | The Cumulus://ID service | Not the Worker, and do not CNAME `id` at `ivqiskeziohbbtkcvlun.supabase.co` (Supabase custom domains are paid, and that CNAME fails TLS without one). |
 
-`cloud` is the Worker. `id` is not the Worker. Share links use `https://cloud.cumuluscloud.app`.
+`cloud` is the Worker. `id` is Cumulus://ID. Before deploying the function, confirm `https://id.cumuluscloud.app/realms/cumulus/protocol/openid-connect/certs` returns a JWKS: the function fetches it and `/userinfo` on every new token. Share links use `https://cloud.cumuluscloud.app`.
 
 SSL/TLS → Full. Minimum TLS 1.2. Always Use HTTPS, once `cloud` is proxied.
 
@@ -142,7 +160,7 @@ curl -fsS -D - -o /dev/null "https://cloud.cumuluscloud.app/"
 
 Expect `/api/healthz` to return `{"ok":true,"service":"cumulus-drive"}`. The allowlisted preflight returns 204 and `access-control-allow-origin: https://cloud.cumuluscloud.app`. The other origin returns 403 and no allow-origin header. `/` returns the console HTML.
 
-Then, with a real user JWT whose `sub` is in `cumulus.identities`: upload, download, and a direct `POST` to `/storage/v1/object/cumulus-drive/...` with that same JWT. The Storage call must be denied. `GET /api/v1/usage` with `x-cumulus-purpose: drive.read` must succeed, and a `PATCH` of `cumulus.tenants.max_bytes` as that user must be denied.
+Then, with a real Cumulus://ID access token (from signing in to `cloud.cumuluscloud.app`, so `aud` is `cumulus-cloud`) whose `sub` has a row in `cumulus.tenants`: upload, download, and `GET /api/v1/usage` with `x-cumulus-purpose: drive.read` must succeed. The same token sent directly to `/storage/v1/object/cumulus-drive/...` and to PostgREST (`PATCH` of `cumulus.tenants.max_bytes`) must be denied: Supabase does not accept Cumulus://ID tokens. After signing out of Cumulus://ID, the same token must get 401 from Drive within 30 seconds.
 
 ## Rollback
 
