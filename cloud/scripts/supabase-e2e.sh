@@ -37,6 +37,7 @@ cleanup() {
 }
 trap cleanup EXIT
 cat > "$envfile" <<EOF
+CUMULUS_AUTH_MODE=supabase
 CUMULUS_REST_URL=http://kong:8000/rest/v1
 CUMULUS_ANON_KEY=${ANON_KEY}
 CUMULUS_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   corsAllowlist,
   DEFAULT_CORS_ORIGINS,
+  driveProxy,
   forwardRequestHeaders,
   functionBase,
   handleRequest,
@@ -42,15 +43,29 @@ test("function URL fails closed unless it is https or loopback", () => {
   assert.ok(functionBase({ SUPABASE_FUNCTION_URL: "http://127.0.0.1:54321/functions/v1/drive" }));
 });
 
-test("/api proxies on any host and /v1 proxies only on the cloud host", () => {
+test("only Drive API paths proxy; /v1 proxies only on the cloud host", () => {
   const cloud = route(new URL("https://cloud.cumuluscloud.app/v1/usage?x=1"), {});
   assert.deepEqual(cloud, { kind: "proxy", path: "/v1/usage" });
   const other = route(new URL("https://id.cumuluscloud.app/v1/usage"), {});
   assert.equal(other.kind, "asset");
   const api = route(new URL("https://id.cumuluscloud.app/api/healthz"), {});
   assert.deepEqual(api, { kind: "proxy", path: "/healthz" });
+  const drive = route(new URL("https://exchange.cumuluscloud.app/api/drive/v1/objects/drive"), {});
+  assert.deepEqual(drive, { kind: "proxy", path: "/drive/v1/objects/drive" });
+  for (const own of ["/api/auth/get-session", "/api/drive/objects", "/api/drive/dev-session", "/api/drive/cid-token", "/api/v1/usage"]) {
+    assert.equal(route(new URL(`https://cloud.cumuluscloud.app${own}`), {}).kind, "asset", own);
+  }
   const page = route(new URL("https://cloud.cumuluscloud.app/"), {});
   assert.equal(page.kind, "asset");
+});
+
+test("driveProxy leaves console paths to the console and proxies Drive API paths", async () => {
+  const calls = [];
+  const app = env({ async fetch(url) { calls.push(String(url)); return new Response("{}", { status: 200 }); } });
+  assert.equal(await driveProxy(new Request("https://cloud.cumuluscloud.app/api/auth/get-session"), app), null);
+  const proxied = await driveProxy(new Request("https://cloud.cumuluscloud.app/api/drive/v1/usage"), app);
+  assert.equal(proxied.status, 200);
+  assert.deepEqual(calls, ["https://example.test/functions/v1/drive/drive/v1/usage"]);
 });
 
 test("proxy strips hop-by-hop headers and forwards authorization and purpose", async () => {
@@ -70,7 +85,7 @@ test("proxy strips hop-by-hop headers and forwards authorization and purpose", a
       });
     },
   });
-  const request = new Request("https://cloud.cumuluscloud.app/api/v1/usage?x=1", {
+  const request = new Request("https://cloud.cumuluscloud.app/api/drive/v1/usage?x=1", {
     method: "PUT",
     headers: {
       authorization: "Bearer token-1",
@@ -94,7 +109,7 @@ test("proxy strips hop-by-hop headers and forwards authorization and purpose", a
   assert.equal(response.headers.get("transfer-encoding"), null);
   assert.equal(response.headers.get("set-cookie"), null);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://example.test/functions/v1/drive/v1/usage?x=1");
+  assert.equal(calls[0].url, "https://example.test/functions/v1/drive/drive/v1/usage?x=1");
   assert.equal(calls[0].init.method, "PUT");
   assert.equal(calls[0].init.redirect, "manual");
   const sent = calls[0].init.headers;
@@ -192,13 +207,16 @@ test("the console is served for non-API paths and assets fail closed when unboun
   assert.equal(bare.status, 503);
 });
 
-test("wrangler.toml is the only worker config and has no account, KV, D1, or R2", async () => {
+test("wrangler.toml deploys the console build as cumulus-cloud with no account, KV, D1, or R2", async () => {
   const toml = await readFile(new URL("../wrangler.toml", import.meta.url), "utf8");
   assert.equal(/^\s*account_id\s*=/m.test(toml), false);
   assert.equal(/kv_namespaces|d1_databases|r2_buckets/.test(toml), false);
   assert.match(toml, /^name\s*=\s*"cumulus-cloud"$/m);
   assert.match(toml, /binding\s*=\s*"ASSETS"/);
-  assert.match(toml, /run_worker_first\s*=\s*true/);
+  // The deployed Worker is the console's Nitro build (cloud/DEPLOY.md).
+  assert.match(toml, /^main\s*=\s*"\.\.\/\.\.\/\.output\/server\/index\.mjs"$/m);
+  assert.match(toml, /^directory\s*=\s*"\.\.\/\.\.\/\.output\/public"$/m);
+  assert.match(toml, /compatibility_flags\s*=\s*\["nodejs_compat"\]/);
   const html = await readFile(new URL("../assets/index.html", import.meta.url), "utf8");
   assert.match(html, /Cumulus/);
 });

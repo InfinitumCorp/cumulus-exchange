@@ -110,6 +110,30 @@
     font-weight: 500;
   }
 
+  /* Cumulus://ID account bar (https://id.cumuluscloud.app/id/bar.js) at the right end of the top bar.
+     The top bar may wrap: when the bar doesn't fit it gets its own row, still on the right. */
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .topbar .brand {
+    flex: 1 1 0;
+  }
+
+  .cumulus-bar {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    max-width: 100%;
+    margin-left: auto;
+  }
+
+  @media (min-width: 1024px) {
+    .topbar .identity + .cumulus-bar {
+      margin-left: 0;
+    }
+  }
+
   .desktop-nav {
     display: none;
   }

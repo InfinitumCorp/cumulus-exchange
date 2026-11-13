@@ -29,7 +29,11 @@ export async function createServer(options) {
   const verifier =
     options.verifier ??
     (authMode === "cid"
-      ? createCidVerifier({ issuer: options.cidIssuer ?? config.cidIssuer })
+      ? createCidVerifier({
+          issuer: options.cidIssuer ?? config.cidIssuer,
+          audiences: options.cidAudiences ?? config.cidAudiences,
+          jwks: options.cidJwks,
+        })
       : authMode === "supabase"
       ? createSupabaseVerifier({
           issuer: options.issuer,

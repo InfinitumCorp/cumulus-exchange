@@ -1,27 +1,40 @@
 /**
- * "Sign in with Cumulus ID" for Cumulus://Cloud (Cumulus Exchange).
+ * "Sign in with Cumulus://ID" for Cumulus://Cloud (Cumulus Exchange).
  *
- * Cumulus ID (https://id.cumuluscloud.app) is the only way people sign in.
- * This app's own Better Auth runs a generic OAuth provider against it:
+ * Cumulus://ID is the only way people sign in. It is a standard OpenID Connect
+ * provider (contract: cumulus-id `docs/integration.md`):
  *
- *   1. GET  <issuer>/api/id/authorize?client_id&redirect_uri&code_challenge(S256)&state
- *      Signed out at Cumulus ID: its sign-in page opens, with "Create a Cumulus ID"
- *      on the same page, and the authorize continues once the person is signed in.
- *   2. Back at /api/auth/callback/<providerId>?code&state.
- *   3. POST <issuer>/api/id/token { code, code_verifier, client_id, redirect_uri }
- *      -> { access_token, expires_in, profile: { cid, username, email, name, handle } }.
+ *   issuer   https://id.cumuluscloud.app/realms/cumulus
+ *   JWKS     <issuer>/protocol/openid-connect/certs   (ES256)
+ *   client   public, no secret; every code exchange is bound by PKCE S256
  *
- * Dependency-free so the client can import the provider list. The issuer is
- * configurable (`CID_ISSUER`) so a mirror that loads in Russia without a VPN can
- * be dropped in. No client secret: the flow is a public client with PKCE.
+ * This app's own Better Auth runs a `genericOAuth` provider against it
+ * (`server.ts`): authorization code + PKCE S256 + `nonce`, and the ID token is
+ * verified against the JWKS (signature, `iss`, `aud`, `exp`, `nonce`) before
+ * anyone is signed in. The local user is keyed by the ID token's `sub` (the cid).
+ * "Create a Cumulus://ID" is the same client with `prompt=create`.
+ *
+ * Dependency-free so the client can import the provider list. The ID token
+ * check that needs `jose` lives in `cumulus-id-token.server.ts`.
+ *
+ * The issuer is configurable (`CID_ISSUER`) so a mirror can be dropped in. The
+ * client id follows the public origin: `cumulus-exchange` on
+ * exchange.cumuluscloud.app, `cumulus-cloud` everywhere else; `CID_CLIENT_ID`
+ * overrides both.
  */
 
-export const DEFAULT_CID_ISSUER = "https://id.cumuluscloud.app";
-/** The client id nexus registers for cumuluscloud.app and cloud.cumuluscloud.app. */
+export const DEFAULT_CID_ISSUER = "https://id.cumuluscloud.app/realms/cumulus";
+/** The client id cumulus-id registers for cumuluscloud.app, cloud. and drive.cumuluscloud.app. */
 export const DEFAULT_CID_CLIENT_ID = "cumulus-cloud";
+/** The add-on client id for the Data Exchange host. */
+export const EXCHANGE_CID_CLIENT_ID = "cumulus-exchange";
+export const EXCHANGE_ORIGIN = "https://exchange.cumuluscloud.app";
+
+/** OIDC scopes this app asks for. No `offline_access`: the app keeps its own session. */
+export const CID_SCOPES = ["openid", "profile", "email"] as const;
 
 export const CUMULUS_ID_PROVIDER_ID = "cumulus-id";
-/** Same client and issuer; asks Cumulus ID to open on "Create a Cumulus ID". */
+/** Same client and issuer; asks Cumulus://ID to open on "Create a Cumulus ID". */
 export const CUMULUS_ID_CREATE_PROVIDER_ID = "cumulus-id-create";
 
 export type SignInProvider = {
@@ -29,7 +42,7 @@ export type SignInProvider = {
   providerId: string;
   /** Button text. */
   label: string;
-  /** Send `prompt=create` so Cumulus ID opens on account creation. */
+  /** Send `prompt=create` so Cumulus://ID opens on account creation. */
   create: boolean;
 };
 
@@ -38,116 +51,70 @@ export const SIGN_IN_PROVIDERS: readonly SignInProvider[] = [
   { providerId: CUMULUS_ID_CREATE_PROVIDER_ID, label: "Create a Cumulus ID", create: true },
 ];
 
-type CidEnv = { CID_ISSUER?: string; CID_CLIENT_ID?: string };
+type CidEnv = { CID_ISSUER?: string; CID_CLIENT_ID?: string; BETTER_AUTH_URL?: string };
 
 export type CidConfig = { issuer: string; clientId: string };
 
-export function cidConfig(env: CidEnv = process.env): CidConfig {
-  const issuer = (env.CID_ISSUER?.trim() || DEFAULT_CID_ISSUER).replace(/\/+$/, "");
-  const clientId = env.CID_CLIENT_ID?.trim() || DEFAULT_CID_CLIENT_ID;
-  return { issuer, clientId };
-}
-
-export const cidAuthorizeUrl = (issuer: string) => `${issuer}/api/id/authorize`;
-export const cidTokenUrl = (issuer: string) => `${issuer}/api/id/token`;
-export const cidUserInfoUrl = (issuer: string) => `${issuer}/api/id/userinfo`;
-
-export type CidProfile = {
-  cid: string;
-  username?: string;
-  email?: string;
-  name?: string;
-  handle?: string;
-};
-
-/** Token set in Better Auth's OAuth2Tokens shape. */
-export type CidTokens = {
-  tokenType: string;
-  accessToken: string;
-  accessTokenExpiresAt?: Date;
-  idToken?: string;
-  raw: Record<string, unknown>;
-};
-
-function asProfile(value: unknown): CidProfile | null {
-  if (!value || typeof value !== "object") return null;
-  const p = value as Record<string, unknown>;
-  if (typeof p.cid !== "string" || !p.cid) return null;
-  const s = (k: string) => (typeof p[k] === "string" && p[k] ? (p[k] as string) : undefined);
-  return { cid: p.cid, username: s("username"), email: s("email"), name: s("name"), handle: s("handle") };
-}
-
-/** Redeem the code at Cumulus ID. Throws a plain-language error on failure. */
-export async function exchangeCidCode(
-  config: CidConfig,
-  data: { code: string; redirectURI: string; codeVerifier?: string },
-  fetchImpl: typeof fetch = fetch,
-): Promise<CidTokens> {
-  if (!data.codeVerifier) throw new Error("Cumulus ID sign-in is missing its PKCE verifier.");
-  let res: Response;
+function originOf(url: string | undefined): string | null {
+  if (!url?.trim()) return null;
   try {
-    res = await fetchImpl(cidTokenUrl(config.issuer), {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        code: data.code,
-        code_verifier: data.codeVerifier,
-        client_id: config.clientId,
-        redirect_uri: data.redirectURI,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-  } catch {
-    throw new Error("Cumulus ID could not be reached. Please try again.");
-  }
-  const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  const accessToken = typeof out.access_token === "string" ? out.access_token : "";
-  if (!res.ok || !accessToken) {
-    throw new Error(typeof out.error === "string" ? out.error : "Cumulus ID did not accept that sign-in.");
-  }
-  const expiresIn = Number(out.expires_in);
-  return {
-    tokenType: typeof out.token_type === "string" ? out.token_type : "Bearer",
-    accessToken,
-    accessTokenExpiresAt: Number.isFinite(expiresIn) && expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : undefined,
-    idToken: typeof out.id_token === "string" ? out.id_token : undefined,
-    raw: out,
-  };
-}
-
-/**
- * The person behind a token set: the profile the token endpoint returned, or
- * `/api/id/userinfo` when it returned none.
- */
-export async function cidProfileFromTokens(
-  config: CidConfig,
-  tokens: { accessToken?: string; raw?: Record<string, unknown> },
-  fetchImpl: typeof fetch = fetch,
-): Promise<CidProfile | null> {
-  const inline = asProfile(tokens.raw?.profile);
-  if (inline) return inline;
-  if (!tokens.accessToken) return null;
-  try {
-    const res = await fetchImpl(cidUserInfoUrl(config.issuer), {
-      headers: { authorization: `Bearer ${tokens.accessToken}`, accept: "application/json" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) return null;
-    return asProfile(await res.json());
+    return new URL(url.trim()).origin;
   } catch {
     return null;
   }
 }
 
-/** Better Auth user info for a Cumulus ID profile. The CID is the stable account id. */
-export function cidUserInfo(profile: CidProfile) {
-  const email = (profile.email ?? "").trim().toLowerCase();
+/** The registered client id for the origin this app is served from. */
+export function cidClientIdForOrigin(publicUrl: string | undefined): string {
+  return originOf(publicUrl) === EXCHANGE_ORIGIN ? EXCHANGE_CID_CLIENT_ID : DEFAULT_CID_CLIENT_ID;
+}
+
+export function cidConfig(env: CidEnv = process.env): CidConfig {
+  const issuer = (env.CID_ISSUER?.trim() || DEFAULT_CID_ISSUER).replace(/\/+$/, "");
+  const clientId = env.CID_CLIENT_ID?.trim() || cidClientIdForOrigin(env.BETTER_AUTH_URL);
+  return { issuer, clientId };
+}
+
+/** The issuer's OIDC endpoints (Keycloak-style paths under the realm issuer). */
+export function cidEndpoints(issuer: string) {
+  const base = issuer.replace(/\/+$/, "");
+  const oidc = `${base}/protocol/openid-connect`;
   return {
-    id: profile.cid,
-    sub: profile.cid,
-    // Every CID owns a mailbox; the IdP reports it, or a linked address it verified.
-    email: email || `${profile.cid}@cumulus-id.invalid`,
-    emailVerified: Boolean(email),
-    name: profile.name || profile.username || profile.handle || "Cumulus",
+    discovery: `${base}/.well-known/openid-configuration`,
+    authorize: `${oidc}/auth`,
+    token: `${oidc}/token`,
+    userinfo: `${oidc}/userinfo`,
+    jwks: `${oidc}/certs`,
+    revoke: `${oidc}/revoke`,
+    logout: `${oidc}/logout`,
+  };
+}
+
+/** Claims this app reads from a verified Cumulus://ID ID token. */
+export type CidIdTokenClaims = {
+  sub: string;
+  cid?: string;
+  name?: string;
+  preferred_username?: string;
+  username?: string;
+  handle?: string;
+  email?: string;
+  email_verified?: boolean;
+};
+
+/**
+ * Better Auth user info for verified ID token claims. `sub` (the cid) is the
+ * stable account id; the user is keyed by it, never by email or username.
+ */
+export function cidUserInfo(claims: CidIdTokenClaims) {
+  const sub = claims.sub;
+  const email = (claims.email ?? "").trim().toLowerCase();
+  return {
+    id: sub,
+    sub,
+    // Cumulus://ID always reports the person's verified @cumuluscloud.app address.
+    email: email || `${sub}@cumulus-id.invalid`,
+    emailVerified: Boolean(email) && claims.email_verified !== false,
+    name: claims.name || claims.preferred_username || claims.username || claims.handle || "Cumulus",
   };
 }

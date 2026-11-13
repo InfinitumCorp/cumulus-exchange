@@ -31,3 +31,7 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Build the cumulus-cloud Worker (Cloudflare) and validate the upload
+        run: |
+          NITRO_PRESET=cloudflare-module npx vite build
+          npx --yes wrangler@4.161.0 deploy --dry-run --config cloud/worker/wrangler.toml --outdir "$RUNNER_TEMP/worker-dry-run"

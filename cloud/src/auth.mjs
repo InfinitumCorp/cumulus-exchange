@@ -1,11 +1,12 @@
 import { createLocalJWKSet, createRemoteJWKSet, jwtVerify } from "jose";
 import { timingSafeEqual } from "node:crypto";
+import { DEFAULT_CID_AUDIENCES } from "./config.mjs";
 import { HttpError } from "./errors.mjs";
 
 /**
- * Cumulus ID (CID) bearer checks, plus the older Keycloak and Supabase JWT modes.
- * People sign in with Cumulus ID (https://id.cumuluscloud.app); `createCidVerifier`
- * is the default. The others stay for existing deployments that set
+ * Cumulus://ID (CID) bearer checks, plus the older Keycloak and Supabase JWT modes.
+ * People sign in with Cumulus://ID (issuer https://id.cumuluscloud.app/realms/cumulus);
+ * `createCidVerifier` is the default. The others stay for existing deployments that set
  * CUMULUS_AUTH_MODE explicitly.
  * InfinitumCorp/eidetic@dfa7d1a was not readable from this environment (repository
  * not found), so this is the contract William named — CID claim, RS256, issuer,
@@ -46,26 +47,65 @@ export function cidFromSupabasePayload(payload) {
 }
 
 /**
- * Cumulus ID verifier. Asks the issuer who the bearer is (`GET /api/id/userinfo`),
- * which works for both the opaque session tokens and the signed JWTs Cumulus ID
- * issues, and honours sign-out at once. A person owns their own Drive, so a
- * verified CID gets every Drive purpose. Answers are cached for a short time
+ * Cumulus://ID verifier (the default). Cumulus://ID is an OIDC issuer
+ * (`https://id.cumuluscloud.app/realms/cumulus`). Its access tokens are ES256
+ * JWTs with `typ: at+jwt`, `sub` = the cid and `aud` = the client id that
+ * obtained them; there is no `tenant_id` claim, so the verified `sub` is the
+ * tenant.
+ *
+ * A JWT is checked offline against the issuer's JWKS (signature, `typ`, `iss`,
+ * `aud` in `audiences`, `exp`), then the issuer's `/userinfo` is asked whether
+ * its session (`sid`) is still live, so sign-out takes effect at once instead of
+ * at expiry. `/userinfo` must name the same subject. Opaque tokens from the
+ * older `/api/id/token` compatibility route have no signature to check and are
+ * accepted only on `/userinfo`'s word. A person owns their own Drive, so a
+ * verified cid gets every Drive purpose. Answers are cached for a short time
  * per token so a page of requests is one round trip.
  *
- * `issuer` is configurable (CID_ISSUER) so a mirror that loads in Russia can be used.
+ * `issuer` is configurable (CID_ISSUER) so a mirror can be used.
  */
-export function createCidVerifier({ issuer, fetchImpl = fetch, cacheMs = 30_000, now = () => Date.now() }) {
+export function createCidVerifier({
+  issuer,
+  audiences = DEFAULT_CID_AUDIENCES,
+  jwks,
+  jwksUrl,
+  fetchImpl = fetch,
+  cacheMs = 30_000,
+  now = () => Date.now(),
+}) {
   const base = String(issuer || "").replace(/\/+$/, "");
-  if (!/^https:\/\//.test(base) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(base)) {
+  if (!/^https:\/\//.test(base) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(base)) {
     throw new Error("CID issuer must be an https origin");
   }
+  if (!Array.isArray(audiences) || audiences.length === 0) throw new Error("CID audiences are required");
+  const oidc = `${base}/protocol/openid-connect`;
+  const keys = jwks ? createLocalJWKSet(jwks) : createRemoteJWKSet(new URL(jwksUrl || `${oidc}/certs`));
   const cache = new Map();
-  async function verifyCid(token) {
-    const hit = cache.get(token);
-    if (hit && hit.until > now()) return hit.principal;
+
+  async function verifySignature(token) {
+    let payload;
+    try {
+      ({ payload } = await jwtVerify(token, keys, {
+        issuer: base,
+        audience: audiences,
+        algorithms: ["ES256"],
+        typ: "at+jwt",
+        requiredClaims: ["sub", "exp"],
+        currentDate: new Date(now()),
+      }));
+    } catch {
+      throw new HttpError(401, "InvalidToken", "Cumulus ID token was rejected");
+    }
+    if (typeof payload.sub !== "string" || !CID.test(payload.sub)) {
+      throw new HttpError(401, "InvalidToken", "CID claim is required");
+    }
+    return payload.sub;
+  }
+
+  async function liveSubject(token) {
     let res;
     try {
-      res = await fetchImpl(`${base}/api/id/userinfo`, {
+      res = await fetchImpl(`${oidc}/userinfo`, {
         headers: { authorization: `Bearer ${token}`, accept: "application/json" },
         signal: AbortSignal.timeout(10_000),
       });
@@ -78,10 +118,19 @@ export function createCidVerifier({ issuer, fetchImpl = fetch, cacheMs = 30_000,
     }
     if (!res.ok) throw new HttpError(503, "ServiceUnavailable", "Cumulus ID could not be reached");
     const profile = await res.json().catch(() => null);
-    const cid = profile?.cid;
-    if (typeof cid !== "string" || !CID.test(cid)) {
+    const sub = typeof profile?.sub === "string" && profile.sub ? profile.sub : profile?.cid;
+    if (typeof sub !== "string" || !CID.test(sub)) {
       throw new HttpError(401, "InvalidToken", "CID claim is required");
     }
+    return sub;
+  }
+
+  async function verifyCid(token) {
+    const hit = cache.get(token);
+    if (hit && hit.until > now()) return hit.principal;
+    const signed = token.split(".").length === 3 ? await verifySignature(token) : null;
+    const cid = await liveSubject(token);
+    if (signed && signed !== cid) throw new HttpError(401, "InvalidToken", "Cumulus ID token was rejected");
     const principal = { cid, purposes: [...ALL_PURPOSES], sub: cid };
     if (cache.size > 5000) cache.clear();
     cache.set(token, { principal, until: now() + cacheMs });
