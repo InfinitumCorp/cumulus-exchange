@@ -20,3 +20,16 @@ test("tenant writes are revoked and the access token hook is not installed", asy
   assert.match(fn, /\/identities\?user_id=eq\./);
   assert.equal(fn.includes("payload.app_metadata"), false);
 });
+
+test("the hosted function verifies Cumulus://ID by default and scopes service-role reads to the verified cid", async () => {
+  const fn = await readFile(new URL("supabase/functions/drive/index.ts", root), "utf8");
+  const auth = await readFile(new URL("supabase/functions/drive/auth.ts", root), "utf8");
+  assert.match(fn, /from "\.\/auth\.ts"/);
+  assert.match(auth, /env\("CUMULUS_AUTH_MODE"\) \|\| "cid"/);
+  assert.match(fn, /dbToken: serviceKey, dbKey: serviceKey, cid, sub: cid/);
+  assert.match(fn, /\/tenants\?cid=eq\.\$\{encodeURIComponent\(principal\.cid\)\}/);
+  // Every user-path PostgREST call after the tenant lookup is filtered by that tenant's id.
+  for (const line of fn.split("\n").filter((l) => l.includes("rest(principal.dbToken") && /\/(objects|shares)\?/.test(l))) {
+    assert.match(line, /tenant_id=eq\.\$\{owner\.id\}/, line);
+  }
+});

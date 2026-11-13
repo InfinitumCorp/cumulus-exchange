@@ -48,6 +48,8 @@ CUMULUS_S3_REGION=${S3_PROTOCOL_REGION}
 CUMULUS_KMS_MASTER_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
 CUMULUS_SHARE_SECRET=local-stack-share-secret
 CUMULUS_PUBLIC_BASE_URL=https://cloud.cumuluscloud.app
+# The e2e test signs in through local Supabase Auth, so it runs the opt-in supabase mode.
+CUMULUS_AUTH_MODE=supabase
 CUMULUS_JWKS_URL=http://kong:8000/auth/v1/.well-known/jwks.json
 CUMULUS_JWT_ISSUER=${API_URL}/auth/v1
 EOF
