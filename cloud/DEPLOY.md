@@ -58,12 +58,14 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 3. **Hook.** In the Auth settings, the custom access token hook is disabled. The function from step 1's older migration is dropped by step 2. Leave it dropped.
 
-4. **Tenant rows.** For each Drive user, as `service_role` or the SQL editor (not as the user):
+4. **Tenant rows.** With `CUMULUS_AUTH_MODE=cid` (the default) there is nothing to insert. The first Drive call from a verified Cumulus ID creates its `cumulus.tenants` row as `service_role`: `name` and `cid` are the person's Cumulus ID subject (`cid_<uuid>`), with the free quota `CUMULUS_FREE_MAX_BYTES` (default 104857600, 100 MiB, the same as the console's session-store Drive) and `CUMULUS_FREE_MAX_OBJECTS` (default 10000). A paid plan raises `max_bytes` on that row, as `service_role` or in the SQL editor.
 
-   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`, where `cid` is the person's Cumulus ID subject (`cid_<uuid>`).
-   - Only with `CUMULUS_AUTH_MODE=supabase`: also `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`.
+   Only with `CUMULUS_AUTH_MODE=supabase`, insert both rows by hand, as `service_role` or in the SQL editor (not as the user):
 
-   `authenticated` cannot insert or update those tenant rows, including `max_bytes` and `used_bytes`. The quota trigger updates `used_bytes` because it is `security definer`.
+   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`
+   - `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`
+
+   `authenticated` cannot insert or update tenant rows, including `max_bytes` and `used_bytes`. The quota trigger updates `used_bytes` because it is `security definer`.
 
 5. **Function.** From this commit:
 
@@ -94,6 +96,8 @@ If a custom access token hook is already enabled, turn it off before step 1. The
    | `CUMULUS_KMS_MASTER_KEY` | 32 bytes, base64. Not a Supabase key. |
    | `CUMULUS_SHARE_SECRET` | HMAC secret for share links. |
    | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app` |
+   | `CUMULUS_FREE_MAX_BYTES` | Optional. Quota of a tenant created on first use. Default 104857600 (100 MiB). |
+   | `CUMULUS_FREE_MAX_OBJECTS` | Optional. Object cap of a tenant created on first use. Default 10000. |
 
    Do not set `CUMULUS_ALLOW_SUPABASE` on the function. That variable is the local-process override and is not how this deploy is authorized.
 

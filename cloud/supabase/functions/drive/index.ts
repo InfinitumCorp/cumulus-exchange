@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
 import { CID, CidError, cidAudiences, cidIssuer, cidJwksUrl, createCidVerifier } from "./cid.ts";
 import { functionPath } from "./path.ts";
+import { newTenantRow } from "./tenant.ts";
 
 /**
  * Cumulus Drive on Supabase Edge Functions.
@@ -172,8 +173,24 @@ async function verify(req: Request): Promise<Principal> {
 }
 
 async function tenant(principal: Principal) {
-  const rows = await rest(principal.db.token, principal.db.key, `/tenants?cid=eq.${encodeURIComponent(principal.cid)}&select=id,used_bytes,max_bytes`);
-  const row = rows?.[0];
+  const lookup = `/tenants?cid=eq.${encodeURIComponent(principal.cid)}&select=id,used_bytes,max_bytes`;
+  let row = (await rest(principal.db.token, principal.db.key, lookup))?.[0];
+  if (!row && verifyCid) {
+    // cid mode: first use of Drive by a verified Cumulus ID gets the free tenant.
+    // ignore-duplicates on cid makes a racing second request a no-op; read back either way.
+    const fresh = newTenantRow(
+      principal.cid,
+      { maxBytes: Deno.env.get("CUMULUS_FREE_MAX_BYTES"), maxObjects: Deno.env.get("CUMULUS_FREE_MAX_OBJECTS") },
+      hex(crypto.getRandomValues(new Uint8Array(12))),
+      new Date(),
+    );
+    await rest(principal.db.token, principal.db.key, "/tenants?on_conflict=cid", {
+      method: "POST",
+      headers: { prefer: "resolution=ignore-duplicates,return=minimal" },
+      body: JSON.stringify(fresh),
+    });
+    row = (await rest(principal.db.token, principal.db.key, lookup))?.[0];
+  }
   if (!row) throw new ApiError(403, "AccessDenied", "CID is not bound to a tenant");
   if (principal.hint && principal.hint !== row.id) throw new ApiError(403, "AccessDenied", "Tenant hint does not match the CID");
   return row as { id: string; used_bytes: number | string; max_bytes: number | string };
