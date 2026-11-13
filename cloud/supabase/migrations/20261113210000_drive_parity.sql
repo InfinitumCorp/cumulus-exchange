@@ -39,3 +39,33 @@ create policy activity_own on cumulus.activity
   with check (
     tenant_id in (select id from cumulus.tenants where cid = cumulus.current_cid())
   );
+
+-- Keep the newest 200 events per tenant. The console shows the latest 50, and
+-- the free project's database is small, so older rows are pruned on insert.
+-- security definer: in supabase mode the inserting role (authenticated) has no
+-- DELETE on this table, and should not get one.
+create or replace function cumulus.prune_activity()
+returns trigger
+language plpgsql
+security definer
+set search_path = cumulus
+as $$
+begin
+  delete from cumulus.activity
+  where tenant_id = new.tenant_id
+    and id in (
+      select id from cumulus.activity
+      where tenant_id = new.tenant_id
+      order by at desc, id desc
+      offset 200
+    );
+  return null;
+end;
+$$;
+
+revoke all on function cumulus.prune_activity() from public;
+
+drop trigger if exists activity_prune on cumulus.activity;
+create trigger activity_prune
+  after insert on cumulus.activity
+  for each row execute function cumulus.prune_activity();
