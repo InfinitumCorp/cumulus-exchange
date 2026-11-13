@@ -103,19 +103,34 @@ The `cumulus-cloud` Worker is the whole console: the TanStack Start server built
 
 `cloud/worker/wrangler.toml` is the only Wrangler config. It has no `account_id` and no KV, D1, or R2 bindings. `wrangler login` on the operator machine selects the account. Do not paste an account id into the file. It uploads the Nitro output in `.output/` as built (`no_bundle`), so always build first.
 
-1. **Console database.** The console's own tables (Better Auth `user`, `session`, `account`, `verification`, and the session-store Drive tables) go in the same Supabase project, schema `public`. From the deploy commit, with the project's Postgres connection string:
+1. **Console database.** The console's own tables (Better Auth `user`, `session`, `account`, `verification`, the session-store Drive tables, and its `_migrations` record) live in their own schema, `cumulus_console`, owned by their own role, `cumulus_console`, whose `search_path` is that schema. Do not put them in `public`: this Supabase project is shared, `public._migrations` already belongs to Cumulus Mail, and the console's migrator keys files by name (`0001_auth.sql` …). The schema is not in the Data API's exposed schemas, and `migrations/0004_console_rls.sql` also turns on row level security with no policies. Do not add `cumulus_console` to Exposed schemas, and do not add policies.
 
-   ```sh
-   DATABASE_URL='<transaction pooler URL, port 6543>' npm run db:migrate
+   On project `ivqiskeziohbbtkcvlun` this is done (migration `cumulus_console_schema`, 2026-11-13): the role and schema exist, migrations `0001`–`0004` are applied and recorded in `cumulus_console._migrations`. The role was created without a password and cannot log in yet. A person gives it one in the SQL editor, with a value generated outside any chat or repo:
+
+   ```sql
+   alter role cumulus_console with login password '<long random password>';
    ```
 
-   Use Supabase's transaction pooler (Settings → Database → Connection string → Transaction, port 6543). On Workers every query opens its own connection (`src/lib/pg-pool.ts`), and the pooler keeps those cheap. `migrations/0004_console_rls.sql` turns on row level security with no policies for every console table, so `anon` and `authenticated` cannot read sessions or tokens through the Data API. The console connects as the owner and is not affected. Do not add policies to those tables.
+   `DATABASE_URL` is then Supabase's transaction pooler URL (Settings → Database → Connection string → Transaction, port 6543) with the user replaced by `cumulus_console.ivqiskeziohbbtkcvlun` and that password. On Workers every query opens its own connection (`src/lib/pg-pool.ts`), and the pooler keeps those cheap. A later migration file runs with that same URL, as that role, so it lands in the same schema:
+
+   ```sh
+   DATABASE_URL='<cumulus_console transaction pooler URL>' npm run db:migrate
+   ```
+
+   On a fresh project, create the role and schema first, as `postgres`, in this order (the grant must come before `authorization`):
+
+   ```sql
+   create role cumulus_console nologin;
+   grant cumulus_console to postgres with set true;
+   create schema cumulus_console authorization cumulus_console;
+   alter role cumulus_console set search_path = cumulus_console;
+   ```
 
 2. **Worker secrets, by name.** Set each with `npx wrangler secret put <NAME> --config cloud/worker/wrangler.toml`. Do not commit the values.
 
    | Name | What it is |
    | --- | --- |
-   | `DATABASE_URL` | The same transaction pooler URL as step 1. |
+   | `DATABASE_URL` | The `cumulus_console` transaction pooler URL from step 1. |
    | `BETTER_AUTH_SECRET` | Random, at least 32 characters (`openssl rand -base64 48`). Signs session cookies and encrypts stored Cumulus ID tokens. Changing it signs everyone out. |
    | `BETTER_AUTH_URL` | `https://cloud.cumuluscloud.app`. The sign-in callback is `<this>/api/auth/callback/cumulus-id`. |
    | `VITE_AUTH_ENABLED` | `true` |
