@@ -435,7 +435,7 @@ async function s3(method: "PUT" | "GET" | "DELETE", key: string, body?: Uint8Arr
       "x-amz-content-sha256": payloadHash,
       "x-amz-date": amzdate,
     },
-    body: method === "PUT" ? body : undefined,
+    body: method === "PUT" && body ? own(body) : undefined,
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -457,7 +457,7 @@ async function seal(plaintext: Uint8Array, aad: string) {
   const dek = crypto.getRandomValues(new Uint8Array(32));
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const dataKey = await crypto.subtle.importKey("raw", dek, "AES-GCM", false, ["encrypt"]);
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: text(aad) }, dataKey, plaintext));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: text(aad) }, dataKey, own(plaintext)));
   return {
     ciphertext: encrypted.slice(0, -16),
     envelope: { v: 1, alg: "AES-256-GCM", nonce: b64(nonce), tag: b64(encrypted.slice(-16)), wrappedDek: await wrapKey(dek) },
@@ -478,7 +478,7 @@ async function open(ciphertext: Uint8Array, envelope: { v: number; alg: string; 
 async function wrapKey(dek: Uint8Array) {
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const key = await crypto.subtle.importKey("raw", masterKey(), "AES-GCM", false, ["encrypt"]);
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, dek));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, own(dek)));
   return `v1:${b64(concat(concat(nonce, encrypted.slice(-16)), encrypted.slice(0, -16)))}`;
 }
 
@@ -496,7 +496,7 @@ function masterKey() {
 }
 
 async function hmacRaw(key: Uint8Array, value: string) {
-  const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const cryptoKey = await crypto.subtle.importKey("raw", own(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, text(value)));
 }
 
@@ -505,11 +505,16 @@ async function hmacHex(key: Uint8Array, value: string) {
 }
 
 async function sha256(bytes: Uint8Array) {
-  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", own(bytes))));
 }
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+/** Web Crypto and fetch take ArrayBuffer-backed bytes; copy only if a view ever sits on shared memory. */
+function own(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
 }
 
 function text(value: string) {
