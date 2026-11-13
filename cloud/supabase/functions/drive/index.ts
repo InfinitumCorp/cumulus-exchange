@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
 import { CID, CidError, cidAudiences, cidIssuer, cidJwksUrl, createCidVerifier } from "./cid.ts";
 import { functionPath } from "./path.ts";
 import { newTenantRow } from "./tenant.ts";
+import { ParityError, SECURITY_REPORT, parseParity, uploadMeta, viewFilter, type UploadMeta } from "./parity.ts";
 
 /**
  * Cumulus Drive on Supabase Edge Functions.
@@ -23,9 +24,9 @@ const FILE_CAP = 50_000_000;
 const STORAGE_BUCKET = "cumulus-drive";
 const PURPOSES = ["drive.read", "drive.write", "drive.share"];
 const ACTIONS: Record<string, string[]> = {
-  "drive.read": ["object.get", "usage.get"],
-  "drive.write": ["object.put", "object.delete", "usage.get"],
-  "drive.share": ["share.create", "object.get"],
+  "drive.read": ["object.get", "usage.get", "parity.read"],
+  "drive.write": ["object.put", "object.delete", "usage.get", "parity.read", "parity.write"],
+  "drive.share": ["share.create", "object.get", "parity.read"],
 };
 
 class ApiError extends Error {
@@ -92,10 +93,11 @@ Deno.serve(async (req) => {
     const principal = await verify(req);
     if (req.method === "GET" && path === "/v1/usage") return json(200, await usage(principal));
     if (req.method === "POST" && path === "/v1/shares") return json(201, await createShare(principal, await req.json()));
+    if (path === "/v1/parity") return await parity(principal, req, url);
     const located = objectPath(path);
     if (!located) return json(404, { error: { code: "NotFound", message: "Unknown route" } });
     if (req.method === "PUT" && located.key) {
-      return json(200, await putObject(principal, located.bucket, located.key, new Uint8Array(await req.arrayBuffer())));
+      return json(200, await putObject(principal, located.bucket, located.key, new Uint8Array(await req.arrayBuffer()), uploadMeta(req.headers)));
     }
     if (req.method === "GET" && located.key) return await download(principal, located.bucket, located.key);
     if (req.method === "GET" && !located.key) return json(200, await listObjects(principal, located.bucket, url.searchParams.get("view")));
@@ -202,7 +204,7 @@ async function usage(principal: Principal) {
   return { usedBytes: Number(row.used_bytes), maxBytes: Number(row.max_bytes), maxFileBytes: FILE_CAP };
 }
 
-async function putObject(principal: Principal, bucket: string, key: string, bytes: Uint8Array) {
+async function putObject(principal: Principal, bucket: string, key: string, bytes: Uint8Array, meta: UploadMeta) {
   requirePurpose(principal, "object.put");
   assertBucket(bucket);
   assertKey(key);
@@ -229,7 +231,9 @@ async function putObject(principal: Principal, bucket: string, key: string, byte
         blob_id: blobId,
         sha256: await sha256(sealed.ciphertext),
         plaintext_sha256: await sha256(bytes),
-        content_type: "application/octet-stream",
+        content_type: meta.contentType,
+        preview_class: meta.previewClass,
+        sealed_name: meta.sealedName,
         envelope_json: JSON.stringify(sealed.envelope),
         created_at: new Date().toISOString(),
       }),
@@ -239,6 +243,7 @@ async function putObject(principal: Principal, bucket: string, key: string, byte
     await s3("DELETE", objectKey).catch(() => undefined);
     throw error;
   }
+  await activity(principal, owner.id, "upload", key);
   return { size: bytes.byteLength, sha256: await sha256(bytes) };
 }
 
@@ -252,13 +257,12 @@ async function download(principal: Principal, bucket: string, key: string) {
   return await plaintextResponse(owner.id, rows[0]);
 }
 
-/** Active objects only. Stars, trash and photos are console parity views that this schema does not store. */
+/** One list view: active (default), trash, starred or photos (see parity.ts viewFilter). */
 async function listObjects(principal: Principal, bucket: string, view: string | null) {
   requirePurpose(principal, "object.get");
   assertBucket(bucket);
   const owner = await tenant(principal);
-  if (view && view !== "active") return { objects: [] };
-  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&select=object_key,size_bytes,content_type,created_at&order=object_key.asc`);
+  const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}${viewFilter(view)}&select=object_key,size_bytes,content_type,created_at,starred,trashed_at,preview_class,sealed_name&order=object_key.asc`);
   return { objects: rows ?? [] };
 }
 
@@ -272,6 +276,7 @@ async function deleteObject(principal: Principal, bucket: string, key: string) {
   await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await s3("DELETE", `tenants/${owner.id}/${rows[0].blob_id}`).catch(() => undefined);
+  await activity(principal, owner.id, "delete", key);
 }
 
 async function createShare(principal: Principal, body: { bucket?: string; key?: string; ttlSeconds?: number }) {
@@ -302,7 +307,64 @@ async function createShare(principal: Principal, body: { bucket?: string; key?: 
     }),
   });
   const sig = await hmacHex(text(shareSecret), `${id}.${exp}`);
+  await activity(principal, owner.id, "share", key);
   return { shareId: id, expiresAt: new Date(exp * 1000).toISOString(), url: `${publicBase}/v1/shared?shareId=${encodeURIComponent(id)}&exp=${exp}&sig=${sig}` };
+}
+
+/** Star, trash, restore, versions, activity and security for the console's cloud Drive. */
+async function parity(principal: Principal, req: Request, url: URL) {
+  if (req.method !== "GET" && req.method !== "POST") throw new ApiError(405, "MethodNotAllowed", "Method is not allowed");
+  let body: Record<string, unknown> | null = null;
+  if (req.method === "POST") {
+    try {
+      body = await req.json();
+    } catch {
+      throw new ApiError(400, "InvalidBody", "Body must be JSON");
+    }
+  }
+  let call;
+  try {
+    call = parseParity(req.method, url.searchParams, body);
+  } catch (error) {
+    if (error instanceof ParityError) throw new ApiError(error.status, error.code, error.message);
+    throw error;
+  }
+  const reading = call.op === "activity" || call.op === "security" || call.op === "versions";
+  requirePurpose(principal, reading ? "parity.read" : "parity.write");
+  if (call.op === "security") return json(200, SECURITY_REPORT);
+  if (call.op === "invite") {
+    throw new ApiError(501, "NotImplemented", "Sharing with another Cumulus ID is not available on this Drive yet; use a share link");
+  }
+  const owner = await tenant(principal);
+  if (call.op === "activity") {
+    const events = await rest(principal.db.token, principal.db.key, `/activity?tenant_id=eq.${owner.id}&select=id,action,object_key,at&order=at.desc&limit=50`);
+    return json(200, { events: events ?? [] });
+  }
+  assertBucket(call.bucket);
+  assertKey(call.key);
+  const where = `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(call.bucket)}&object_key=eq.${encodeURIComponent(call.key)}`;
+  const rows = await rest(principal.db.token, principal.db.key, `${where}&select=object_key`);
+  if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
+  if (call.op === "versions") return json(200, { versions: [] });
+  const patch = call.op === "star"
+    ? { starred: call.starred }
+    : { trashed_at: call.op === "trash" ? new Date().toISOString() : null };
+  await rest(principal.db.token, principal.db.key, where, {
+    method: "PATCH",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify(patch),
+  });
+  await activity(principal, owner.id, call.op === "star" ? (call.starred ? "star" : "unstar") : call.op, call.key);
+  return json(200, { ok: true });
+}
+
+/** Best effort: an activity row that fails to write never fails the Drive call. */
+async function activity(principal: Principal, tenantId: string, action: string, objectKey: string | null) {
+  await rest(principal.db.token, principal.db.key, "/activity", {
+    method: "POST",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify({ id: `act_${hex(crypto.getRandomValues(new Uint8Array(8)))}`, tenant_id: tenantId, action, object_key: objectKey, at: new Date().toISOString() }),
+  }).catch((error) => console.error(JSON.stringify({ msg: "activity", err: error instanceof Error ? error.message : "unknown" })));
 }
 
 async function shared(url: URL) {

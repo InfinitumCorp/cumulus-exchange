@@ -64,6 +64,8 @@ test(
     assert.equal(bobDelete.status, 404);
     await assertIsolated(bobClaims, adaClaims);
 
+    await assertParity(adaToken, bobToken);
+
     const share = await drive("POST", "/v1/shares", adaToken, "drive.share", Buffer.from(JSON.stringify({
       bucket: "docs",
       key: "hello.txt",
@@ -80,6 +82,8 @@ test(
     assert.equal(over.status, 403, over.body);
     assert.equal(JSON.parse(over.body).error.code, "QuotaExceeded");
 
+    const photoGone = await drive("DELETE", "/v1/objects/docs/pic.png", adaToken, "drive.write");
+    assert.equal(photoGone.status, 204, photoGone.body);
     const removed = await drive("DELETE", "/v1/objects/docs/hello.txt", adaToken, "drive.write");
     assert.equal(removed.status, 204);
     const gone = await drive("GET", "/v1/objects/docs/hello.txt", adaToken, "drive.read");
@@ -335,4 +339,72 @@ async function drive(method, path, token, purpose, body, contentType) {
   });
   const raw = Buffer.from(await response.arrayBuffer());
   return { status: response.status, body: raw.toString("utf8"), raw };
+}
+
+async function listView(token, view) {
+  const listed = await drive("GET", `/v1/objects/docs?view=${view}`, token, "drive.read");
+  assert.equal(listed.status, 200, listed.body);
+  return JSON.parse(listed.body).objects;
+}
+
+async function parityCall(token, purpose, payload) {
+  return drive("POST", "/v1/parity", token, purpose, Buffer.from(JSON.stringify({ bucket: "docs", ...payload })), "application/json");
+}
+
+async function assertParity(adaToken, bobToken) {
+  const photo = await fetch(`${DRIVE}/v1/objects/docs/pic.png`, {
+    method: "PUT",
+    headers: {
+      authorization: `Bearer ${adaToken}`,
+      "x-cumulus-purpose": "drive.write",
+      "content-type": "image/png",
+      "x-cumulus-preview-class": "image",
+      "x-cumulus-sealed-name": "v1:c2VhbGVk",
+    },
+    body: Buffer.from("png!!"),
+  });
+  assert.equal(photo.status, 200, await photo.text());
+
+  const active = await listView(adaToken, "active");
+  assert.deepEqual(active.map((o) => o.object_key).sort(), ["hello.txt", "pic.png"]);
+  const pic = active.find((o) => o.object_key === "pic.png");
+  assert.equal(pic.content_type, "image/png");
+  assert.equal(pic.preview_class, "image");
+  assert.equal(pic.sealed_name, "v1:c2VhbGVk");
+  assert.equal(pic.starred, false);
+  assert.deepEqual((await listView(adaToken, "photos")).map((o) => o.object_key), ["pic.png"]);
+
+  const star = await parityCall(adaToken, "drive.write", { op: "star", key: "hello.txt", starred: 1 });
+  assert.equal(star.status, 200, star.body);
+  assert.deepEqual((await listView(adaToken, "starred")).map((o) => o.object_key), ["hello.txt"]);
+
+  const readOnly = await parityCall(adaToken, "drive.read", { op: "trash", key: "hello.txt" });
+  assert.equal(readOnly.status, 403, readOnly.body);
+  const trash = await parityCall(adaToken, "drive.write", { op: "trash", key: "hello.txt" });
+  assert.equal(trash.status, 200, trash.body);
+  assert.deepEqual((await listView(adaToken, "active")).map((o) => o.object_key), ["pic.png"]);
+  assert.deepEqual((await listView(adaToken, "trash")).map((o) => o.object_key), ["hello.txt"]);
+  assert.deepEqual(await listView(adaToken, "starred"), []);
+  const restore = await parityCall(adaToken, "drive.write", { op: "restore", key: "hello.txt" });
+  assert.equal(restore.status, 200, restore.body);
+  assert.deepEqual(await listView(adaToken, "trash"), []);
+
+  const bobStar = await parityCall(bobToken, "drive.write", { op: "star", key: "hello.txt", starred: 1 });
+  assert.equal(bobStar.status, 404, bobStar.body);
+  assert.deepEqual(await listView(bobToken, "active"), []);
+
+  const events = await drive("GET", "/v1/parity?op=activity", adaToken, "drive.read");
+  assert.equal(events.status, 200, events.body);
+  const actions = JSON.parse(events.body).events.map((e) => e.action);
+  for (const action of ["upload", "star", "trash", "restore"]) assert.ok(actions.includes(action), `${action} in ${actions}`);
+  const bobEvents = await drive("GET", "/v1/parity?op=activity", bobToken, "drive.read");
+  assert.equal(JSON.parse(bobEvents.body).events.some((e) => e.object_key === "hello.txt" || e.object_key === "pic.png"), false);
+
+  const security = await drive("GET", "/v1/parity?op=security", adaToken, "drive.read");
+  assert.equal(security.status, 200, security.body);
+  assert.equal(JSON.parse(security.body).versions, "not kept");
+  const versions = await parityCall(adaToken, "drive.write", { op: "versions", key: "hello.txt" });
+  assert.deepEqual(JSON.parse(versions.body), { versions: [] });
+  const invite = await parityCall(adaToken, "drive.write", { op: "invite", key: "hello.txt", cid: "cid_someone", role: "viewer" });
+  assert.equal(invite.status, 501, invite.body);
 }
