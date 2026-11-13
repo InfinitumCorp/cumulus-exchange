@@ -43,7 +43,7 @@ Use the SQL editor or the Supabase CLI against the free project only when a pers
 
 If a custom access token hook is already enabled, turn it off before step 1. The migration drops that function. An enabled hook that calls a missing function rejects every login on the project.
 
-1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket.
+1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket. Then `cloud/supabase/migrations/20261113210000_drive_parity.sql`: additive columns on `cumulus.objects` (`starred`, `trashed_at`, `preview_class`, `sealed_name`) and the `cumulus.activity` table, with row level security like the other tables. The console's star, trash, restore, photos and activity views need it.
 
    After those migrations, add `cumulus` to the project's Exposed schemas (Settings → API). Keep any schemas already listed (`public`, `graphql_public`, and `eon` on this project). Equivalent SQL:
 
