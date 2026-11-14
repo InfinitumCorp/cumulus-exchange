@@ -28,3 +28,16 @@ export function previewShareHref(url: string): string {
   }
   return url;
 }
+
+/**
+ * The reason a Drive call was refused, for the notice line. Reads the cloud
+ * function's `{ error: { message } }` and the session store's `{ message }`;
+ * anything else, or an unreadable body, gives the fallback.
+ */
+export async function refusalReason(response: Response, fallback: string): Promise<string> {
+  const body = (await response.json().catch(() => null)) as { message?: unknown; error?: { message?: unknown } } | null;
+  const raw = typeof body?.error?.message === "string" ? body.error.message : typeof body?.message === "string" ? body.message : "";
+  const text = raw.trim().replace(/\s+/g, " ");
+  if (!text) return fallback;
+  return text.length > 200 ? `${text.slice(0, 199)}…` : text;
+}
