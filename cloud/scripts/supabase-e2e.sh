@@ -2,7 +2,24 @@
 # Local Supabase CLI only. Does not link, migrate, or deploy the live project.
 set -eu
 cd "$(dirname "$0")/.."
-supabase start
+# Image pulls from public.ecr.aws are rate limited ("toomanyrequests") now and
+# then. A failed start stops what it began; try again after a pause, up to 3 times.
+started=0
+attempt=1
+while [ "$attempt" -le 3 ]; do
+  if supabase start; then
+    started=1
+    break
+  fi
+  echo "supabase start failed (attempt $attempt of 3)"
+  supabase stop --no-backup >/dev/null 2>&1 || true
+  attempt=$((attempt + 1))
+  if [ "$attempt" -le 3 ]; then sleep $((attempt * 15)); fi
+done
+if [ "$started" != "1" ]; then
+  echo "supabase start failed 3 times"
+  exit 1
+fi
 reset_ok=0
 attempt=0
 while [ "$attempt" -lt 3 ]; do

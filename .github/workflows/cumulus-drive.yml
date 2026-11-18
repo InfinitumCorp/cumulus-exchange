@@ -35,6 +35,9 @@ jobs:
       - name: Test
         working-directory: cloud
         run: npm test
+      - name: Type-check the Drive Edge Function
+        working-directory: cloud/supabase/functions/drive
+        run: npx --yes deno@2.9.6 check --no-config index.ts
   e2e:
     name: live Keycloak and Drive
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}

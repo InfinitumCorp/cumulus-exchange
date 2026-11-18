@@ -7,6 +7,7 @@ import {
   driveHeaders,
   driveObjectUrl,
   previewShareHref,
+  refusalReason,
 } from "@/lib/exchange/drive-client";
 import { nameMatches, previewClassFor } from "@/lib/drive/preview-class";
 import { deriveDriveKey, openContent, openName, SEAL_MEDIA_TYPE, sealContent, sealName, toArrayBuffer } from "@/lib/drive/seal";
@@ -224,7 +225,7 @@ function CloudDriveView() {
       }),
     });
     if (!response.ok) {
-      setNotice("Could not create a share link.");
+      setNotice(await refusalReason(response, "Could not create a share link."));
       return;
     }
     const body = (await response.json()) as { url: string };
@@ -240,7 +241,7 @@ function CloudDriveView() {
       body: JSON.stringify({ op, bucket: DRIVE_BUCKET, ...fields }),
     });
     if (!response.ok) {
-      setNotice("That Drive action was refused.");
+      setNotice(await refusalReason(response, "That Drive action was refused."));
       return null;
     }
     return response.json();

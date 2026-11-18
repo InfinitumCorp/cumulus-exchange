@@ -43,7 +43,7 @@ Use the SQL editor or the Supabase CLI against the free project only when a pers
 
 If a custom access token hook is already enabled, turn it off before step 1. The migration drops that function. An enabled hook that calls a missing function rejects every login on the project.
 
-1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket.
+1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket. Then `cloud/supabase/migrations/20261113210000_drive_parity.sql`: additive columns on `cumulus.objects` (`starred`, `trashed_at`, `preview_class`, `sealed_name`) and the `cumulus.activity` table, with row level security like the other tables. The console's star, trash, restore, photos and activity views need it.
 
    After those migrations, add `cumulus` to the project's Exposed schemas (Settings → API). Keep any schemas already listed (`public`, `graphql_public`, and `eon` on this project). Equivalent SQL:
 
@@ -58,12 +58,14 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 3. **Hook.** In the Auth settings, the custom access token hook is disabled. The function from step 1's older migration is dropped by step 2. Leave it dropped.
 
-4. **Tenant rows.** For each Drive user, as `service_role` or the SQL editor (not as the user):
+4. **Tenant rows.** With `CUMULUS_AUTH_MODE=cid` (the default) there is nothing to insert. The first Drive call from a verified Cumulus ID creates its `cumulus.tenants` row as `service_role`: `name` and `cid` are the person's Cumulus ID subject (`cid_<uuid>`), with the free quota `CUMULUS_FREE_MAX_BYTES` (default 104857600, 100 MiB, the same as the console's session-store Drive) and `CUMULUS_FREE_MAX_OBJECTS` (default 10000). A paid plan raises `max_bytes` on that row, as `service_role` or in the SQL editor.
 
-   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`, where `cid` is the person's Cumulus ID subject (`cid_<uuid>`).
-   - Only with `CUMULUS_AUTH_MODE=supabase`: also `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`.
+   Only with `CUMULUS_AUTH_MODE=supabase`, insert both rows by hand, as `service_role` or in the SQL editor (not as the user):
 
-   `authenticated` cannot insert or update those tenant rows, including `max_bytes` and `used_bytes`. The quota trigger updates `used_bytes` because it is `security definer`.
+   - `insert into cumulus.tenants (id, name, cid, max_bytes, max_objects, used_bytes, used_objects, created_at) values (...)`
+   - `insert into cumulus.identities (user_id, cid) values ('<auth user uuid>', '<cid>')`
+
+   `authenticated` cannot insert or update tenant rows, including `max_bytes` and `used_bytes`. The quota trigger updates `used_bytes` because it is `security definer`.
 
 5. **Function.** From this commit:
 
@@ -73,27 +75,35 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
    `--no-verify-jwt` matches `cloud/supabase/config.toml`. The function verifies the JWT itself.
 
-6. **Function secrets, by name.** Set each with `supabase secrets set --project-ref ivqiskeziohbbtkcvlun`. Do not commit the values.
+6. **Function secrets, by name.** Set each with `supabase secrets set --project-ref ivqiskeziohbbtkcvlun NAME=value`, or in the dashboard under Edge Functions → Secrets. Do not commit the values. Supabase gives every Edge Function `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`, and the function falls back to them, so the REST URL and the keys need no secret of their own.
+
+   Required:
 
    | Name | What it is |
    | --- | --- |
-   | `CUMULUS_REST_URL` | Project REST URL, no trailing slash. The function appends PostgREST paths. |
-   | `CUMULUS_SERVICE_ROLE_KEY` | Service role key. Every metadata call in `cid` mode, and share downloads in both modes. |
-   | `CUMULUS_AUTH_MODE` | Optional. `cid` (default) or `supabase`. Any other value stops the function at boot. |
-   | `CID_ISSUER` | Optional. Defaults to `https://id.cumuluscloud.app/realms/cumulus`. |
-   | `CID_AUDIENCES` | Optional. Comma-separated client ids whose access tokens Drive accepts. Defaults to `cumulus-cloud,cumulus-exchange,cumulus-mail`. |
-   | `CID_JWKS_URL` | Optional. Defaults to `<CID_ISSUER>/protocol/openid-connect/certs`. |
-   | `CUMULUS_ANON_KEY` | `supabase` mode only. Project anon key, sent as `apikey` on user-scoped PostgREST calls. |
-   | `CUMULUS_JWKS_URL` | `supabase` mode only. `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1/.well-known/jwks.json` |
-   | `CUMULUS_JWT_ISSUER` | `supabase` mode only. `https://ivqiskeziohbbtkcvlun.supabase.co/auth/v1` |
-   | `CUMULUS_S3_ENDPOINT` | Storage S3 endpoint for the project. |
-   | `CUMULUS_S3_SIGN_HOST` | Host header the S3 signature must use, when it differs from the endpoint host. |
-   | `CUMULUS_S3_ACCESS_KEY` | Storage S3 access key id. |
-   | `CUMULUS_S3_SECRET_KEY` | Storage S3 secret. |
-   | `CUMULUS_S3_REGION` | Storage S3 region. |
-   | `CUMULUS_KMS_MASTER_KEY` | 32 bytes, base64. Not a Supabase key. |
-   | `CUMULUS_SHARE_SECRET` | HMAC secret for share links. |
-   | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app` |
+   | `CUMULUS_S3_ENDPOINT` | The project's Storage S3 endpoint, from Storage → Settings → S3 Connection. |
+   | `CUMULUS_S3_REGION` | The region shown there. This project is in `eu-west-1`. |
+   | `CUMULUS_S3_ACCESS_KEY` | Access key id of an S3 access key created on that page. |
+   | `CUMULUS_S3_SECRET_KEY` | Its secret, shown once when the key is created. |
+   | `CUMULUS_KMS_MASTER_KEY` | 32 random bytes, base64 (`openssl rand -base64 32`). Wraps every file's data key: losing it makes stored files unreadable, so keep a copy outside Supabase. |
+   | `CUMULUS_SHARE_SECRET` | HMAC secret for share links (`openssl rand -hex 32`). Changing it invalidates links already handed out. |
+   | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app`, the host share links point at. |
+
+   Optional:
+
+   | Name | What it is |
+   | --- | --- |
+   | `CUMULUS_AUTH_MODE` | `cid` (default) or `supabase`. Any other value stops the function at boot. |
+   | `CID_ISSUER` | Defaults to `https://id.cumuluscloud.app/realms/cumulus`. |
+   | `CID_AUDIENCES` | Comma-separated client ids whose access tokens Drive accepts. Defaults to `cumulus-cloud,cumulus-exchange,cumulus-mail`. |
+   | `CID_JWKS_URL` | Defaults to `<CID_ISSUER>/protocol/openid-connect/certs`. |
+   | `CUMULUS_FREE_MAX_BYTES` | Quota of a tenant created on first use. Default 104857600 (100 MiB). |
+   | `CUMULUS_FREE_MAX_OBJECTS` | Object cap of a tenant created on first use. Default 10000. |
+   | `CUMULUS_S3_SIGN_HOST` | Host header the S3 signature must use, only when it differs from the endpoint host. |
+   | `CUMULUS_REST_URL` | Defaults to `$SUPABASE_URL/rest/v1`. |
+   | `CUMULUS_SERVICE_ROLE_KEY` | Defaults to `SUPABASE_SERVICE_ROLE_KEY`. Used for every metadata call in `cid` mode and for share downloads. |
+   | `CUMULUS_ANON_KEY` | `supabase` mode only. Defaults to `SUPABASE_ANON_KEY`. |
+   | `CUMULUS_JWKS_URL`, `CUMULUS_JWT_ISSUER` | `supabase` mode only. Default to the project's own Auth (`$SUPABASE_URL/auth/v1`). |
 
    Do not set `CUMULUS_ALLOW_SUPABASE` on the function. That variable is the local-process override and is not how this deploy is authorized.
 
@@ -103,19 +113,34 @@ The `cumulus-cloud` Worker is the whole console: the TanStack Start server built
 
 `cloud/worker/wrangler.toml` is the only Wrangler config. It has no `account_id` and no KV, D1, or R2 bindings. `wrangler login` on the operator machine selects the account. Do not paste an account id into the file. It uploads the Nitro output in `.output/` as built (`no_bundle`), so always build first.
 
-1. **Console database.** The console's own tables (Better Auth `user`, `session`, `account`, `verification`, and the session-store Drive tables) go in the same Supabase project, schema `public`. From the deploy commit, with the project's Postgres connection string:
+1. **Console database.** The console's own tables (Better Auth `user`, `session`, `account`, `verification`, the session-store Drive tables, and its `_migrations` record) live in their own schema, `cumulus_console`, owned by their own role, `cumulus_console`, whose `search_path` is that schema. Do not put them in `public`: this Supabase project is shared, `public._migrations` already belongs to Cumulus Mail, and the console's migrator keys files by name (`0001_auth.sql` …). The schema is not in the Data API's exposed schemas, and `migrations/0004_console_rls.sql` also turns on row level security with no policies. Do not add `cumulus_console` to Exposed schemas, and do not add policies.
 
-   ```sh
-   DATABASE_URL='<transaction pooler URL, port 6543>' npm run db:migrate
+   On project `ivqiskeziohbbtkcvlun` this is done (migration `cumulus_console_schema`, 2026-11-13): the role and schema exist, migrations `0001`–`0004` are applied and recorded in `cumulus_console._migrations`. The role was created without a password and cannot log in yet. A person gives it one in the SQL editor, with a value generated outside any chat or repo:
+
+   ```sql
+   alter role cumulus_console with login password '<long random password>';
    ```
 
-   Use Supabase's transaction pooler (Settings → Database → Connection string → Transaction, port 6543). On Workers every query opens its own connection (`src/lib/pg-pool.ts`), and the pooler keeps those cheap. `migrations/0004_console_rls.sql` turns on row level security with no policies for every console table, so `anon` and `authenticated` cannot read sessions or tokens through the Data API. The console connects as the owner and is not affected. Do not add policies to those tables.
+   `DATABASE_URL` is then Supabase's transaction pooler URL (Settings → Database → Connection string → Transaction, port 6543) with the user replaced by `cumulus_console.ivqiskeziohbbtkcvlun` and that password. On Workers every query opens its own connection (`src/lib/pg-pool.ts`), and the pooler keeps those cheap. A later migration file runs with that same URL, as that role, so it lands in the same schema:
+
+   ```sh
+   DATABASE_URL='<cumulus_console transaction pooler URL>' npm run db:migrate
+   ```
+
+   On a fresh project, create the role and schema first, as `postgres`, in this order (the grant must come before `authorization`):
+
+   ```sql
+   create role cumulus_console nologin;
+   grant cumulus_console to postgres with set true;
+   create schema cumulus_console authorization cumulus_console;
+   alter role cumulus_console set search_path = cumulus_console;
+   ```
 
 2. **Worker secrets, by name.** Set each with `npx wrangler secret put <NAME> --config cloud/worker/wrangler.toml`. Do not commit the values.
 
    | Name | What it is |
    | --- | --- |
-   | `DATABASE_URL` | The same transaction pooler URL as step 1. |
+   | `DATABASE_URL` | The `cumulus_console` transaction pooler URL from step 1. |
    | `BETTER_AUTH_SECRET` | Random, at least 32 characters (`openssl rand -base64 48`). Signs session cookies and encrypts stored Cumulus ID tokens. Changing it signs everyone out. |
    | `BETTER_AUTH_URL` | `https://cloud.cumuluscloud.app`. The sign-in callback is `<this>/api/auth/callback/cumulus-id`. |
    | `VITE_AUTH_ENABLED` | `true` |
