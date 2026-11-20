@@ -25,8 +25,9 @@ function env(overrides = {}) {
   };
 }
 
-test("default CORS allowlist is the three cumuluscloud.app origins", () => {
+test("default CORS allowlist includes the Drive host and does not use a wildcard", () => {
   assert.deepEqual(corsAllowlist({}), DEFAULT_CORS_ORIGINS);
+  assert.equal(DEFAULT_CORS_ORIGINS.includes("https://drive.cumuluscloud.app"), true);
   assert.equal(DEFAULT_CORS_ORIGINS.includes("*"), false);
   assert.equal(corsAllowlist({ CUMULUS_CORS_ORIGINS: "*" }), null);
   assert.equal(corsAllowlist({ CUMULUS_CORS_ORIGINS: "https://*.cumuluscloud.app" }), null);
@@ -43,15 +44,17 @@ test("function URL fails closed unless it is https or loopback", () => {
   assert.ok(functionBase({ SUPABASE_FUNCTION_URL: "http://127.0.0.1:54321/functions/v1/drive" }));
 });
 
-test("only Drive API paths proxy; /v1 proxies only on the cloud host", () => {
+test("only Drive API paths proxy; /v1 proxies on the Drive host and the cloud host", () => {
+  const drive = route(new URL("https://drive.cumuluscloud.app/v1/shared?shareId=1"), {});
+  assert.deepEqual(drive, { kind: "proxy", path: "/v1/shared" });
   const cloud = route(new URL("https://cloud.cumuluscloud.app/v1/usage?x=1"), {});
   assert.deepEqual(cloud, { kind: "proxy", path: "/v1/usage" });
   const other = route(new URL("https://id.cumuluscloud.app/v1/usage"), {});
   assert.equal(other.kind, "asset");
   const api = route(new URL("https://id.cumuluscloud.app/api/healthz"), {});
   assert.deepEqual(api, { kind: "proxy", path: "/healthz" });
-  const drive = route(new URL("https://exchange.cumuluscloud.app/api/drive/v1/objects/drive"), {});
-  assert.deepEqual(drive, { kind: "proxy", path: "/drive/v1/objects/drive" });
+  const exchangeApi = route(new URL("https://exchange.cumuluscloud.app/api/drive/v1/objects/drive"), {});
+  assert.deepEqual(exchangeApi, { kind: "proxy", path: "/drive/v1/objects/drive" });
   for (const own of ["/api/auth/get-session", "/api/drive/objects", "/api/drive/dev-session", "/api/drive/cid-token", "/api/v1/usage"]) {
     assert.equal(route(new URL(`https://cloud.cumuluscloud.app${own}`), {}).kind, "asset", own);
   }
@@ -92,6 +95,10 @@ test("proxy strips hop-by-hop headers and forwards authorization and purpose", a
       "x-cumulus-purpose": "drive.read",
       "x-cumulus-tenant": "tn_ada",
       "content-type": "application/octet-stream",
+      "x-cumulus-keep-version": "1",
+      "x-cumulus-preview-class": "text",
+      "x-cumulus-sealed-name": "v1:abc",
+      "x-share-password": "share-secret",
       cookie: "session=secret",
       connection: "close, x-secret",
       "x-secret": "nope",
@@ -117,6 +124,10 @@ test("proxy strips hop-by-hop headers and forwards authorization and purpose", a
   assert.equal(sent.get("x-cumulus-purpose"), "drive.read");
   assert.equal(sent.get("x-cumulus-tenant"), "tn_ada");
   assert.equal(sent.get("content-type"), "application/octet-stream");
+  assert.equal(sent.get("x-cumulus-keep-version"), "1");
+  assert.equal(sent.get("x-cumulus-preview-class"), "text");
+  assert.equal(sent.get("x-cumulus-sealed-name"), "v1:abc");
+  assert.equal(sent.get("x-share-password"), "share-secret");
   assert.equal(sent.get("cookie"), null);
   assert.equal(sent.get("x-secret"), null);
   assert.equal(sent.get("connection"), null);

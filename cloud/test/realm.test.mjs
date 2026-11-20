@@ -20,7 +20,8 @@ test("Keycloak realm matches cumuluscloud.app and carries a CID claim", async ()
   const mail = realm.clients.find((client) => client.clientId === "cumulus-mail");
   assert.equal(cloud.publicClient, true);
   assert.equal(cloud.directAccessGrantsEnabled, false);
-  assert.deepEqual(cloud.webOrigins, [`https://${config.cloudHost}`]);
+  assert.deepEqual(cloud.webOrigins, [`https://${config.driveHost}`, `https://${config.cloudHost}`]);
+  assert.ok(cloud.redirectUris.includes(`https://${config.driveHost}/*`));
   assert.ok(cloud.redirectUris.includes(`https://${config.cloudHost}/*`));
   assert.ok(cloud.redirectUris.includes("http://127.0.0.1:18080/*"));
   assert.deepEqual(mail.webOrigins, [`https://${config.mailHost}`]);

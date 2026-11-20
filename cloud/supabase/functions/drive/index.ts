@@ -2,7 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.2.9";
 import { CID, CidError, cidAudiences, cidIssuer, cidJwksUrl, createCidVerifier } from "./cid.ts";
 import { functionPath } from "./path.ts";
 import { newTenantRow } from "./tenant.ts";
-import { ParityError, SECURITY_REPORT, parseParity, uploadMeta, viewFilter, type UploadMeta } from "./parity.ts";
+import { ParityError, SECURITY_REPORT, hashSharePassword, parseParity, sharePasswordMatches, uploadMeta, viewFilter, type UploadMeta } from "./parity.ts";
 
 /**
  * Cumulus Drive on Supabase Edge Functions.
@@ -64,7 +64,7 @@ const accessKey = Deno.env.get("CUMULUS_S3_ACCESS_KEY") ?? "";
 const secretKey = Deno.env.get("CUMULUS_S3_SECRET_KEY") ?? "";
 const region = Deno.env.get("CUMULUS_S3_REGION") ?? "local";
 const shareSecret = Deno.env.get("CUMULUS_SHARE_SECRET") ?? "";
-const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://cloud.cumuluscloud.app").replace(/\/+$/, "");
+const publicBase = (Deno.env.get("CUMULUS_PUBLIC_BASE_URL") ?? "https://drive.cumuluscloud.app").replace(/\/+$/, "");
 for (const value of [restUrl, s3Endpoint, jwksUrl, issuer]) refuseLive(value);
 const authMode = Deno.env.get("CUMULUS_AUTH_MODE") || "cid";
 if (authMode !== "cid" && authMode !== "supabase") throw new Error("CUMULUS_AUTH_MODE must be cid or supabase");
@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
   const path = functionPath(url.pathname);
   try {
     if (req.method === "GET" && path === "/healthz") return json(200, { ok: true, service: "cumulus-drive" });
-    if (req.method === "GET" && path === "/v1/shared") return await shared(url);
+    if (req.method === "GET" && path === "/v1/shared") return await shared(req, url);
     const principal = await verify(req);
     if (req.method === "GET" && path === "/v1/usage") return json(200, await usage(principal));
     if (req.method === "POST" && path === "/v1/shares") return json(201, await createShare(principal, await req.json()));
@@ -210,41 +210,103 @@ async function putObject(principal: Principal, bucket: string, key: string, byte
   assertKey(key);
   if (bytes.byteLength > FILE_CAP) throw new ApiError(413, "EntityTooLarge", "Object exceeds the per-file cap");
   const owner = await tenant(principal);
+  const where = `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`;
+  const existing = await rest(
+    principal.db.token,
+    principal.db.key,
+    `${where}&select=blob_id,size_bytes,sha256,plaintext_sha256,content_type,envelope_json,created_at`,
+  );
+  const previous = existing?.[0] as
+    | { blob_id: string; size_bytes: number | string; sha256: string; plaintext_sha256: string; content_type: string; envelope_json: string; created_at: string }
+    | undefined;
   const blobId = hex(crypto.getRandomValues(new Uint8Array(16)));
   const sealed = await seal(bytes, `${owner.id}\n${blobId}`);
   const objectKey = `tenants/${owner.id}/${blobId}`;
   await s3("PUT", objectKey, sealed.ciphertext);
+  const now = new Date().toISOString();
+  const ciphertextSha = await sha256(sealed.ciphertext);
+  const plaintextSha = await sha256(bytes);
+  let retained = false;
+  let versionId: string | null = null;
   try {
-    const existing = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
-    if (existing?.[0]) {
-      await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
-      await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
-    }
-    await rest(principal.db.token, principal.db.key, "/objects", {
-      method: "POST",
-      headers: { prefer: "return=minimal" },
-      body: JSON.stringify({
-        tenant_id: owner.id,
-        bucket,
-        object_key: key,
+    if (previous && meta.keepVersion) {
+      const history = await rest(
+        principal.db.token,
+        principal.db.key,
+        `/versions?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=id`,
+      );
+      if ((history ?? []).length >= 20) throw new ApiError(409, "VersionLimit", "Version history is capped at 20");
+      await retainBytes(owner.id, bytes.byteLength);
+      retained = true;
+      versionId = `ver_${hex(crypto.getRandomValues(new Uint8Array(8)))}`;
+      await rest(principal.db.token, principal.db.key, "/versions", {
+        method: "POST",
+        headers: { prefer: "return=minimal" },
+        body: JSON.stringify({
+          id: versionId,
+          tenant_id: owner.id,
+          bucket,
+          object_key: key,
+          size_bytes: Number(previous.size_bytes),
+          blob_id: previous.blob_id,
+          sha256: previous.sha256,
+          plaintext_sha256: previous.plaintext_sha256,
+          content_type: previous.content_type,
+          envelope_json: previous.envelope_json,
+          created_at: previous.created_at,
+        }),
+      });
+      const patch: Record<string, unknown> = {
         size_bytes: bytes.byteLength,
         blob_id: blobId,
-        sha256: await sha256(sealed.ciphertext),
-        plaintext_sha256: await sha256(bytes),
+        sha256: ciphertextSha,
+        plaintext_sha256: plaintextSha,
         content_type: meta.contentType,
-        preview_class: meta.previewClass,
-        sealed_name: meta.sealedName,
         envelope_json: JSON.stringify(sealed.envelope),
-        created_at: new Date().toISOString(),
-      }),
-    });
-    if (existing?.[0]) await s3("DELETE", `tenants/${owner.id}/${existing[0].blob_id}`).catch(() => undefined);
+        created_at: now,
+      };
+      if (meta.previewClass) patch.preview_class = meta.previewClass;
+      if (meta.sealedName) patch.sealed_name = meta.sealedName;
+      await rest(principal.db.token, principal.db.key, where, {
+        method: "PATCH",
+        headers: { prefer: "return=minimal" },
+        body: JSON.stringify(patch),
+      });
+    } else {
+      if (previous) {
+        await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
+        await rest(principal.db.token, principal.db.key, where, { method: "DELETE" });
+      }
+      await rest(principal.db.token, principal.db.key, "/objects", {
+        method: "POST",
+        headers: { prefer: "return=minimal" },
+        body: JSON.stringify({
+          tenant_id: owner.id,
+          bucket,
+          object_key: key,
+          size_bytes: bytes.byteLength,
+          blob_id: blobId,
+          sha256: ciphertextSha,
+          plaintext_sha256: plaintextSha,
+          content_type: meta.contentType,
+          preview_class: meta.previewClass,
+          sealed_name: meta.sealedName,
+          envelope_json: JSON.stringify(sealed.envelope),
+          created_at: now,
+        }),
+      });
+      if (previous) await s3("DELETE", `tenants/${owner.id}/${previous.blob_id}`).catch(() => undefined);
+    }
   } catch (error) {
+    if (versionId) {
+      await rest(serviceKey, serviceKey, `/versions?id=eq.${encodeURIComponent(versionId)}`, { method: "DELETE" }).catch(() => undefined);
+    }
+    if (retained) await retainBytes(owner.id, -bytes.byteLength).catch(() => undefined);
     await s3("DELETE", objectKey).catch(() => undefined);
     throw error;
   }
   await activity(principal, owner.id, "upload", key);
-  return { size: bytes.byteLength, sha256: await sha256(bytes) };
+  return { size: bytes.byteLength, sha256: plaintextSha };
 }
 
 async function download(principal: Principal, bucket: string, key: string) {
@@ -253,8 +315,21 @@ async function download(principal: Principal, bucket: string, key: string) {
   assertKey(key);
   const owner = await tenant(principal);
   const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256`);
-  if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
-  return await plaintextResponse(owner.id, rows[0]);
+  if (rows?.[0]) return await plaintextResponse(owner.id, rows[0]);
+  const grants = await rest(
+    serviceKey,
+    serviceKey,
+    `/grants?grantee_cid=eq.${encodeURIComponent(principal.cid)}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&revoked_at=is.null&select=tenant_id&limit=1`,
+  );
+  const grant = grants?.[0] as { tenant_id: string } | undefined;
+  if (!grant) throw new ApiError(404, "NoSuchKey", "Object not found");
+  const sharedRows = await rest(
+    serviceKey,
+    serviceKey,
+    `/objects?tenant_id=eq.${encodeURIComponent(grant.tenant_id)}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&trashed_at=is.null&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256`,
+  );
+  if (!sharedRows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
+  return await plaintextResponse(grant.tenant_id, sharedRows[0]);
 }
 
 /** One list view: active (default), trash, starred or photos (see parity.ts viewFilter). */
@@ -273,13 +348,24 @@ async function deleteObject(principal: Principal, bucket: string, key: string) {
   const owner = await tenant(principal);
   const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
   if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
+  const versions = await rest(
+    serviceKey,
+    serviceKey,
+    `/versions?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=id,blob_id,size_bytes`,
+  );
+  for (const version of versions ?? []) {
+    await retainBytes(owner.id, -Number(version.size_bytes));
+    await rest(serviceKey, serviceKey, `/versions?id=eq.${encodeURIComponent(version.id)}`, { method: "DELETE" });
+    await s3("DELETE", `tenants/${owner.id}/${version.blob_id}`).catch(() => undefined);
+  }
   await rest(principal.db.token, principal.db.key, `/shares?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
+  await rest(principal.db.token, principal.db.key, `/grants?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
   await s3("DELETE", `tenants/${owner.id}/${rows[0].blob_id}`).catch(() => undefined);
   await activity(principal, owner.id, "delete", key);
 }
 
-async function createShare(principal: Principal, body: { bucket?: string; key?: string; ttlSeconds?: number }) {
+async function createShare(principal: Principal, body: { bucket?: string; key?: string; ttlSeconds?: number; password?: unknown; maxDownloads?: unknown }) {
   requirePurpose(principal, "share.create");
   const bucket = body.bucket ?? "";
   const key = body.key ?? "";
@@ -288,11 +374,20 @@ async function createShare(principal: Principal, body: { bucket?: string; key?: 
   if (!Number.isInteger(body.ttlSeconds) || (body.ttlSeconds ?? 0) < 1 || (body.ttlSeconds ?? 0) > 900) {
     throw new ApiError(400, "InvalidTtl", "Share links expire in 1 to 900 seconds");
   }
+  const password = typeof body.password === "string" && body.password.length > 0 ? body.password : null;
+  if (password && (password.length < 4 || password.length > 128)) {
+    throw new ApiError(400, "InvalidPassword", "Share password is not valid");
+  }
+  const maxDownloads = body.maxDownloads == null ? null : Number(body.maxDownloads);
+  if (maxDownloads != null && (!Number.isInteger(maxDownloads) || maxDownloads < 1 || maxDownloads > 10000)) {
+    throw new ApiError(400, "InvalidLimit", "Download limit is not valid");
+  }
   const owner = await tenant(principal);
   const rows = await rest(principal.db.token, principal.db.key, `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(bucket)}&object_key=eq.${encodeURIComponent(key)}&select=blob_id`);
   if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
   const id = `shr_${hex(crypto.getRandomValues(new Uint8Array(8)))}`;
   const exp = Math.floor(Date.now() / 1000) + (body.ttlSeconds as number);
+  const passwordHash = password ? await hashSharePassword(password) : null;
   await rest(principal.db.token, principal.db.key, "/shares", {
     method: "POST",
     headers: { prefer: "return=minimal" },
@@ -304,11 +399,20 @@ async function createShare(principal: Principal, body: { bucket?: string; key?: 
       expires_at: new Date(exp * 1000).toISOString(),
       revoked_at: null,
       created_at: new Date().toISOString(),
+      password_hash: passwordHash,
+      max_downloads: maxDownloads,
+      download_count: 0,
     }),
   });
   const sig = await hmacHex(text(shareSecret), `${id}.${exp}`);
   await activity(principal, owner.id, "share", key);
-  return { shareId: id, expiresAt: new Date(exp * 1000).toISOString(), url: `${publicBase}/v1/shared?shareId=${encodeURIComponent(id)}&exp=${exp}&sig=${sig}` };
+  return {
+    shareId: id,
+    expiresAt: new Date(exp * 1000).toISOString(),
+    hasPassword: Boolean(passwordHash),
+    maxDownloads,
+    url: `${publicBase}/v1/shared?shareId=${encodeURIComponent(id)}&exp=${exp}&sig=${sig}`,
+  };
 }
 
 /** Star, trash, restore, versions, activity and security for the console's cloud Drive. */
@@ -329,23 +433,87 @@ async function parity(principal: Principal, req: Request, url: URL) {
     if (error instanceof ParityError) throw new ApiError(error.status, error.code, error.message);
     throw error;
   }
-  const reading = call.op === "activity" || call.op === "security" || call.op === "versions";
+  const reading = call.op === "activity" || call.op === "security" || call.op === "versions" || call.op === "shared";
   requirePurpose(principal, reading ? "parity.read" : "parity.write");
   if (call.op === "security") return json(200, SECURITY_REPORT);
-  if (call.op === "invite") {
-    throw new ApiError(501, "NotImplemented", "Sharing with another Cumulus ID is not available on this Drive yet; use a share link");
-  }
   const owner = await tenant(principal);
   if (call.op === "activity") {
     const events = await rest(principal.db.token, principal.db.key, `/activity?tenant_id=eq.${owner.id}&select=id,action,object_key,at&order=at.desc&limit=50`);
     return json(200, { events: events ?? [] });
   }
+  if (call.op === "shared") {
+    const grants = await rest(serviceKey, serviceKey, `/grants?grantee_cid=eq.${encodeURIComponent(principal.cid)}&revoked_at=is.null&select=id,tenant_id,bucket,object_key,role&order=created_at.desc`);
+    return json(200, { grants: grants ?? [] });
+  }
   assertBucket(call.bucket);
   assertKey(call.key);
   const where = `/objects?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(call.bucket)}&object_key=eq.${encodeURIComponent(call.key)}`;
-  const rows = await rest(principal.db.token, principal.db.key, `${where}&select=object_key`);
+  const rows = await rest(principal.db.token, principal.db.key, `${where}&select=object_key,size_bytes,blob_id,sha256,plaintext_sha256,content_type,envelope_json,created_at`);
   if (!rows?.[0]) throw new ApiError(404, "NoSuchKey", "Object not found");
-  if (call.op === "versions") return json(200, { versions: [] });
+  if (call.op === "versions") {
+    const versions = await rest(principal.db.token, principal.db.key, `/versions?tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(call.bucket)}&object_key=eq.${encodeURIComponent(call.key)}&select=id,size_bytes,content_type,created_at&order=created_at.desc`);
+    return json(200, { versions: versions ?? [] });
+  }
+  if (call.op === "invite") {
+    if (call.cid === principal.cid) throw new ApiError(400, "InvalidCid", "Cannot invite the owner");
+    const id = `gr_${hex(crypto.getRandomValues(new Uint8Array(8)))}`;
+    await rest(principal.db.token, principal.db.key, "/grants", {
+      method: "POST",
+      headers: { prefer: "return=minimal" },
+      body: JSON.stringify({
+        id,
+        tenant_id: owner.id,
+        bucket: call.bucket,
+        object_key: call.key,
+        grantee_cid: call.cid,
+        role: call.role,
+        created_at: new Date().toISOString(),
+        revoked_at: null,
+      }),
+    });
+    await activity(principal, owner.id, "invite", call.key);
+    return json(201, { id, role: call.role, cid: call.cid });
+  }
+  if (call.op === "restore-version") {
+    const found = await rest(principal.db.token, principal.db.key, `/versions?id=eq.${encodeURIComponent(call.versionId)}&tenant_id=eq.${owner.id}&bucket=eq.${encodeURIComponent(call.bucket)}&object_key=eq.${encodeURIComponent(call.key)}&select=id,size_bytes,blob_id,sha256,plaintext_sha256,content_type,envelope_json,created_at`);
+    const version = found?.[0];
+    if (!version) throw new ApiError(404, "NoSuchVersion", "Version not found");
+    const current = rows[0];
+    await rest(principal.db.token, principal.db.key, "/versions", {
+      method: "POST",
+      headers: { prefer: "return=minimal" },
+      body: JSON.stringify({
+        id: `ver_${hex(crypto.getRandomValues(new Uint8Array(8)))}`,
+        tenant_id: owner.id,
+        bucket: call.bucket,
+        object_key: call.key,
+        size_bytes: Number(current.size_bytes),
+        blob_id: current.blob_id,
+        sha256: current.sha256,
+        plaintext_sha256: current.plaintext_sha256,
+        content_type: current.content_type,
+        envelope_json: current.envelope_json,
+        created_at: current.created_at,
+      }),
+    });
+    await rest(principal.db.token, principal.db.key, `/versions?id=eq.${encodeURIComponent(version.id)}`, { method: "DELETE" });
+    await rest(principal.db.token, principal.db.key, where, {
+      method: "PATCH",
+      headers: { prefer: "return=minimal" },
+      body: JSON.stringify({
+        size_bytes: Number(version.size_bytes),
+        blob_id: version.blob_id,
+        sha256: version.sha256,
+        plaintext_sha256: version.plaintext_sha256,
+        content_type: version.content_type,
+        envelope_json: version.envelope_json,
+        created_at: version.created_at,
+        trashed_at: null,
+      }),
+    });
+    await activity(principal, owner.id, "version", call.key);
+    return json(200, { ok: true });
+  }
   const patch = call.op === "star"
     ? { starred: call.starred }
     : { trashed_at: call.op === "trash" ? new Date().toISOString() : null };
@@ -367,7 +535,17 @@ async function activity(principal: Principal, tenantId: string, action: string, 
   }).catch((error) => console.error(JSON.stringify({ msg: "activity", err: error instanceof Error ? error.message : "unknown" })));
 }
 
-async function shared(url: URL) {
+/** Charge or release bytes that stay on disk outside the current object row. service_role only. */
+async function retainBytes(tenantId: string, delta: number) {
+  if (!delta) return;
+  await rest(serviceKey, serviceKey, "/rpc/note_retained_bytes", {
+    method: "POST",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify({ p_tenant: tenantId, p_delta: delta }),
+  });
+}
+
+async function shared(req: Request, url: URL) {
   const shareId = url.searchParams.get("shareId") ?? "";
   const exp = Number(url.searchParams.get("exp"));
   const sig = url.searchParams.get("sig") ?? "";
@@ -375,9 +553,21 @@ async function shared(url: URL) {
     throw new ApiError(403, "AccessDenied", "Share link is not valid");
   }
   if (Math.floor(Date.now() / 1000) > exp) throw new ApiError(403, "ExpiredToken", "Share link has expired");
-  const shares = await rest(serviceKey, serviceKey, `/shares?id=eq.${encodeURIComponent(shareId)}&select=tenant_id,bucket,object_key,expires_at,revoked_at`);
+  const shares = await rest(serviceKey, serviceKey, `/shares?id=eq.${encodeURIComponent(shareId)}&select=tenant_id,bucket,object_key,expires_at,revoked_at,password_hash,max_downloads,download_count`);
   const share = shares?.[0];
   if (!share || share.revoked_at || Date.parse(share.expires_at) !== exp * 1000) throw new ApiError(403, "AccessDenied", "Share link is not valid");
+  const supplied = url.searchParams.get("password") ?? req.headers.get("x-share-password") ?? "";
+  if (share.password_hash && !(await sharePasswordMatches(supplied, share.password_hash))) {
+    throw new ApiError(401, "PasswordRequired", "Share password is required");
+  }
+  if (share.max_downloads != null && Number(share.download_count) >= Number(share.max_downloads)) {
+    throw new ApiError(403, "DownloadLimit", "Share download limit was reached");
+  }
+  await rest(serviceKey, serviceKey, `/shares?id=eq.${encodeURIComponent(shareId)}`, {
+    method: "PATCH",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify({ download_count: Number(share.download_count ?? 0) + 1 }),
+  });
   const objects = await rest(serviceKey, serviceKey, `/objects?tenant_id=eq.${share.tenant_id}&bucket=eq.${encodeURIComponent(share.bucket)}&object_key=eq.${encodeURIComponent(share.object_key)}&select=blob_id,envelope_json,content_type,sha256,plaintext_sha256,trashed_at`);
   // A file in the trash stops serving its links; restoring it brings them back.
   if (!objects?.[0] || objects[0].trashed_at) throw new ApiError(404, "NoSuchKey", "Object not found");

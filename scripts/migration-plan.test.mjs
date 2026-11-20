@@ -66,6 +66,7 @@ test("drive metadata is globbed and the auth schema source stays in migrations/a
     { name: "0002_cumulus_drive.sql", path: "0002_cumulus_drive.sql" },
     { name: "0003_drive_parity.sql", path: "0003_drive_parity.sql" },
     { name: "0004_console_rls.sql", path: "0004_console_rls.sql" },
+    { name: "0005_drive_identity_cid.sql", path: "0005_drive_identity_cid.sql" },
   ]);
   assert.ok(readdirSync(join(migrationsDir, "auth")).includes("0001_auth.sql"));
 });

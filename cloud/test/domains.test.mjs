@@ -8,13 +8,15 @@ test("domain defaults name cumuluscloud.app and its three hosts", () => {
   assert.equal(config.rootDomain, "cumuluscloud.app");
   assert.equal(config.idHost, "id.cumuluscloud.app");
   assert.equal(config.cloudHost, "cloud.cumuluscloud.app");
+  assert.equal(config.driveHost, "drive.cumuluscloud.app");
   assert.equal(config.mailHost, "mail.cumuluscloud.app");
   assert.equal(config.issuer, "https://id.cumuluscloud.app/realms/cumulus");
   assert.equal(config.audience, "https://id.cumuluscloud.app");
   assert.equal(config.jwksUrl, "https://id.cumuluscloud.app/realms/cumulus/protocol/openid-connect/certs");
-  assert.equal(config.publicBaseUrl, "https://cloud.cumuluscloud.app");
+  assert.equal(config.publicBaseUrl, "https://drive.cumuluscloud.app");
   assert.deepEqual(config.corsOrigins, [
     "https://id.cumuluscloud.app",
+    "https://drive.cumuluscloud.app",
     "https://cloud.cumuluscloud.app",
     "https://mail.cumuluscloud.app",
   ]);
@@ -27,7 +29,8 @@ test("root domain, host, and CORS overrides replace the defaults", () => {
   assert.equal(fromRoot.cloudHost, "cloud.example.test");
   assert.equal(fromRoot.mailHost, "mail.example.test");
   assert.equal(fromRoot.issuer, "https://id.example.test/realms/cumulus");
-  assert.equal(fromRoot.publicBaseUrl, "https://cloud.example.test");
+  assert.equal(fromRoot.driveHost, "drive.example.test");
+  assert.equal(fromRoot.publicBaseUrl, "https://drive.example.test");
 
   const explicit = loadConfig({
     CUMULUS_ROOT_DOMAIN: "example.test",
@@ -78,7 +81,7 @@ test("share links use the cloud host and CORS echoes only allowlisted origins", 
   });
   assert.equal(share.status, 201, share.body.toString("utf8"));
   const url = JSON.parse(share.body.toString("utf8")).url;
-  assert.equal(url.startsWith("https://cloud.cumuluscloud.app/v1/shared?"), true);
+  assert.equal(url.startsWith("https://drive.cumuluscloud.app/v1/shared?"), true);
 
   const allowed = await call(fx.port, {
     method: "OPTIONS",

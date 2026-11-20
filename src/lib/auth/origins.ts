@@ -12,6 +12,17 @@
 export const CANONICAL_ORIGIN = "https://cumuluscloud.app";
 export const CANONICAL_HOST = "cumuluscloud.app";
 
+/**
+ * Origins that serve this app. drive.cumuluscloud.app is the canonical Drive
+ * host. exchange.cumuluscloud.app is the Data Exchange host. Cookies stay
+ * host-only; listing an origin here does not redirect any other host.
+ */
+export const SERVING_ORIGINS = [
+  CANONICAL_ORIGIN,
+  "https://drive.cumuluscloud.app",
+  "https://exchange.cumuluscloud.app",
+] as const;
+
 /** Not trusted origins, not cookie domains, and not live DNS from this repo. */
 export const PROPOSED_HOSTS = {
   id: "id.cumuluscloud.app",
@@ -29,8 +40,8 @@ export function buildTrustedOrigins(input: {
 }): string[] {
   const preview = input.previewHosts.flatMap((host) => [host, `https://${host}`, `http://${host}`]);
   const listed = input.explicitBaseURL
-    ? [input.explicitBaseURL, CANONICAL_ORIGIN, ...input.localOrigins]
-    : [CANONICAL_ORIGIN, ...preview, ...input.localOrigins];
+    ? [input.explicitBaseURL, ...SERVING_ORIGINS, ...input.localOrigins]
+    : [...SERVING_ORIGINS, ...preview, ...input.localOrigins];
   const unique = [...new Set(listed.map((origin) => origin.trim()).filter(Boolean))];
   for (const origin of unique) {
     if (origin.includes("*") && origin.includes("cumuluscloud.app")) {

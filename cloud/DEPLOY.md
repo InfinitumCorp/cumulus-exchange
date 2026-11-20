@@ -43,7 +43,7 @@ Use the SQL editor or the Supabase CLI against the free project only when a pers
 
 If a custom access token hook is already enabled, turn it off before step 1. The migration drops that function. An enabled hook that calls a missing function rejects every login on the project.
 
-1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket. Then `cloud/supabase/migrations/20261113210000_drive_parity.sql`: additive columns on `cumulus.objects` (`starred`, `trashed_at`, `preview_class`, `sealed_name`) and the `cumulus.activity` table, with row level security like the other tables. The console's star, trash, restore, photos and activity views need it.
+1. **Migrations, in filename order.** Apply `cloud/supabase/migrations/20261107120000_cumulus.sql`, then `cloud/supabase/migrations/20261108120000_tenant_rls_and_bucket.sql`. The second file is required. It replaces `cumulus.current_cid()`, drops the hook function, revokes `INSERT`/`UPDATE`/`DELETE` on `cumulus.tenants` from `anon` and `authenticated`, and creates the bucket. Then `cloud/supabase/migrations/20261113210000_drive_parity.sql`: additive columns on `cumulus.objects` (`starred`, `trashed_at`, `preview_class`, `sealed_name`) and the `cumulus.activity` table, with row level security like the other tables. The console's star, trash, restore, photos and activity views need it. Then `cloud/supabase/migrations/20261120120000_drive_versions_grants.sql`: `cumulus.versions`, `cumulus.grants`, share password and download-limit columns, and `cumulus.note_retained_bytes`. The console's History, Invite, share password, and download limit need it. Apply it before deploying the function that writes those rows.
 
    After those migrations, add `cumulus` to the project's Exposed schemas (Settings → API). Keep any schemas already listed (`public`, `graphql_public`, and `eon` on this project). Equivalent SQL:
 
@@ -87,7 +87,7 @@ If a custom access token hook is already enabled, turn it off before step 1. The
    | `CUMULUS_S3_SECRET_KEY` | Its secret, shown once when the key is created. |
    | `CUMULUS_KMS_MASTER_KEY` | 32 random bytes, base64 (`openssl rand -base64 32`). Wraps every file's data key: losing it makes stored files unreadable, so keep a copy outside Supabase. |
    | `CUMULUS_SHARE_SECRET` | HMAC secret for share links (`openssl rand -hex 32`). Changing it invalidates links already handed out. |
-   | `CUMULUS_PUBLIC_BASE_URL` | `https://cloud.cumuluscloud.app`, the host share links point at. |
+   | `CUMULUS_PUBLIC_BASE_URL` | `https://drive.cumuluscloud.app`, the host share links point at. `cloud.cumuluscloud.app` still answers `/v1/*`. This repo does not redirect either host. |
 
    Optional:
 
@@ -109,13 +109,13 @@ If a custom access token hook is already enabled, turn it off before step 1. The
 
 ## Worker build and deploy
 
-The `cumulus-cloud` Worker is the whole console: the TanStack Start server built by Nitro for Cloudflare (`NITRO_PRESET=cloudflare-module`), with its browser files as Worker assets. It serves the console pages, runs "Sign in with Cumulus ID" (Better Auth at `/api/auth/*`), and keeps sessions in the Supabase project's Postgres. Only Drive API calls go to the Edge Function: `/api/drive/v1/*` and `/api/healthz` on any host, and `/v1/*` plus `/healthz` on `cloud.cumuluscloud.app` (share links). Everything stays on the free Workers and Supabase plans; the compressed upload is about 1.4 MB, under the free plan's 3 MB Worker limit.
+The `cumulus-cloud` Worker is the whole console: the TanStack Start server built by Nitro for Cloudflare (`NITRO_PRESET=cloudflare-module`), with its browser files as Worker assets. It serves the console pages, runs "Sign in with Cumulus ID" (Better Auth at `/api/auth/*`), and keeps sessions in the Supabase project's Postgres. Only Drive API calls go to the Edge Function: `/api/drive/v1/*` and `/api/healthz` on any host, and `/v1/*` plus `/healthz` on `drive.cumuluscloud.app` and `cloud.cumuluscloud.app` (share links). Neither host is redirected. Everything stays on the free Workers and Supabase plans; the compressed upload is about 1.4 MB, under the free plan's 3 MB Worker limit.
 
 `cloud/worker/wrangler.toml` is the only Wrangler config. It has no `account_id` and no KV, D1, or R2 bindings. `wrangler login` on the operator machine selects the account. Do not paste an account id into the file. It uploads the Nitro output in `.output/` as built (`no_bundle`), so always build first.
 
 1. **Console database.** The console's own tables (Better Auth `user`, `session`, `account`, `verification`, the session-store Drive tables, and its `_migrations` record) live in their own schema, `cumulus_console`, owned by their own role, `cumulus_console`, whose `search_path` is that schema. Do not put them in `public`: this Supabase project is shared, `public._migrations` already belongs to Cumulus Mail, and the console's migrator keys files by name (`0001_auth.sql` …). The schema is not in the Data API's exposed schemas, and `migrations/0004_console_rls.sql` also turns on row level security with no policies. Do not add `cumulus_console` to Exposed schemas, and do not add policies.
 
-   On project `ivqiskeziohbbtkcvlun` this is done (migration `cumulus_console_schema`, 2026-11-13): the role and schema exist, migrations `0001`–`0004` are applied and recorded in `cumulus_console._migrations`. The role was created without a password and cannot log in yet. A person gives it one in the SQL editor, with a value generated outside any chat or repo:
+   On project `ivqiskeziohbbtkcvlun` this is done (migration `cumulus_console_schema`, 2026-11-13): the role and schema exist, migrations `0001`–`0004` are applied and recorded in `cumulus_console._migrations`. `migrations/0005_drive_identity_cid.sql` widens `drive_identity.cid` so a Cumulus ID subject of the form `cid_<uuid>` can be stored. Apply it with the same `DATABASE_URL` before relying on that handle in the session store. The role was created without a password and cannot log in yet. A person gives it one in the SQL editor, with a value generated outside any chat or repo:
 
    ```sql
    alter role cumulus_console with login password '<long random password>';
@@ -142,11 +142,11 @@ The `cumulus-cloud` Worker is the whole console: the TanStack Start server built
    | --- | --- |
    | `DATABASE_URL` | The `cumulus_console` transaction pooler URL from step 1. |
    | `BETTER_AUTH_SECRET` | Random, at least 32 characters (`openssl rand -base64 48`). Signs session cookies and encrypts stored Cumulus ID tokens. Changing it signs everyone out. |
-   | `BETTER_AUTH_URL` | `https://cloud.cumuluscloud.app`. The sign-in callback is `<this>/api/auth/callback/cumulus-id`. |
+   | `BETTER_AUTH_URL` | `https://drive.cumuluscloud.app`. The sign-in callback is `<this>/api/auth/callback/cumulus-id`. |
    | `VITE_AUTH_ENABLED` | `true` |
    | `SUPABASE_FUNCTION_URL` | `https://ivqiskeziohbbtkcvlun.supabase.co/functions/v1/drive` |
 
-   Optional, only to override the defaults: `CID_ISSUER`, `CID_CLIENT_ID`, `CUMULUS_CLOUD_HOST`, `CUMULUS_ID_HOST`, `CUMULUS_MAIL_HOST`, `CUMULUS_CORS_ORIGINS`. The default Drive CORS allowlist is exactly `https://id.cumuluscloud.app`, `https://cloud.cumuluscloud.app`, and `https://mail.cumuluscloud.app`. A `*` value makes the proxy return 503.
+   Optional, only to override the defaults: `CID_ISSUER`, `CID_CLIENT_ID`, `CUMULUS_DRIVE_HOST`, `CUMULUS_CLOUD_HOST`, `CUMULUS_ID_HOST`, `CUMULUS_MAIL_HOST`, `CUMULUS_CORS_ORIGINS`. The default Drive CORS allowlist is exactly `https://id.cumuluscloud.app`, `https://drive.cumuluscloud.app`, `https://cloud.cumuluscloud.app`, and `https://mail.cumuluscloud.app`. A `*` value makes the proxy return 503.
 
    Cumulus ID must list `https://cloud.cumuluscloud.app/api/auth/callback/cumulus-id` and `.../callback/cumulus-id-create` as redirect URIs for the `cumulus-cloud` client (cumulus-id `src/clients.ts`). Sign-in fails with a redirect error until it does.
 
