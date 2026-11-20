@@ -10,11 +10,12 @@ test("cloud plane trash, versions, password shares, grants, and deferred securit
     defaultTenantObjects: 20,
   });
   const alpha = await createTenant(fx.port, fx.bootstrapToken, { name: "alpha", cid: "cid_alpha" });
-  const beta = await createTenant(fx.port, fx.bootstrapToken, { name: "beta", cid: "cid_beta" });
+  const betaCid = "cid_11111111-2222-4333-8444-555555555555";
+  const beta = await createTenant(fx.port, fx.bootstrapToken, { name: "beta", cid: betaCid });
   assert.equal(alpha.status, 201);
   assert.equal(beta.status, 201);
   const tokenA = await tokenFor(fx.keys.privateKey, "cid_alpha", ["drive.read", "drive.write", "drive.share"]);
-  const tokenB = await tokenFor(fx.keys.privateKey, "cid_beta", ["drive.read", "drive.write", "drive.share"]);
+  const tokenB = await tokenFor(fx.keys.privateKey, betaCid, ["drive.read", "drive.write", "drive.share"]);
   const headersA = { authorization: `Bearer ${tokenA}`, "x-cumulus-purpose": "drive.write" };
 
   const first = await call(fx.port, {
@@ -101,7 +102,7 @@ test("cloud plane trash, versions, password shares, grants, and deferred securit
     method: "POST",
     path: "/v1/parity",
     headers: { ...headersA, "content-type": "application/json" },
-    body: JSON.stringify({ op: "invite", bucket: "drive", key: "notes/a.txt", cid: "cid_beta", role: "viewer" }),
+    body: JSON.stringify({ op: "invite", bucket: "drive", key: "notes/a.txt", cid: betaCid, role: "viewer" }),
   });
   assert.equal(invite.status, 201, invite.body.toString("utf8"));
   const shared = await call(fx.port, {

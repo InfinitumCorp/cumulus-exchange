@@ -73,7 +73,7 @@ test(
     })), "application/json");
     assert.equal(share.status, 201, share.body);
     const shareUrl = new URL(JSON.parse(share.body).url);
-    assert.equal(shareUrl.host, "cloud.cumuluscloud.app");
+    assert.equal(shareUrl.host, "drive.cumuluscloud.app");
     const shared = await fetch(`${DRIVE}${shareUrl.pathname}${shareUrl.search}`);
     assert.equal(shared.status, 200);
     assert.equal(await shared.text(), "hello-from-ada");
@@ -87,6 +87,52 @@ test(
     const restoredLink = await fetch(`${DRIVE}${shareUrl.pathname}${shareUrl.search}`);
     assert.equal(restoredLink.status, 200);
     assert.equal(await restoredLink.text(), "hello-from-ada");
+
+    const replaced = await drive(
+      "PUT",
+      "/v1/objects/docs/hello.txt",
+      adaToken,
+      "drive.write",
+      Buffer.from("hello-v2"),
+      "text/plain",
+      { "x-cumulus-keep-version": "1" },
+    );
+    assert.equal(replaced.status, 200, replaced.body);
+    const versions = await parityCall(adaToken, "drive.write", { op: "versions", key: "hello.txt" });
+    assert.equal(versions.status, 200, versions.body);
+    const history = JSON.parse(versions.body).versions;
+    assert.equal(history.length, 1);
+    const restoredVersion = await parityCall(adaToken, "drive.write", {
+      op: "restore-version",
+      key: "hello.txt",
+      versionId: history[0].id,
+    });
+    assert.equal(restoredVersion.status, 200, restoredVersion.body);
+    const rolled = await drive("GET", "/v1/objects/docs/hello.txt", adaToken, "drive.read");
+    assert.equal(rolled.raw.toString("utf8"), "hello-from-ada");
+
+    const invite = await parityCall(adaToken, "drive.write", { op: "invite", key: "hello.txt", cid: bob.cid, role: "viewer" });
+    assert.equal(invite.status, 201, invite.body);
+    const viaGrant = await drive("GET", "/v1/objects/docs/hello.txt", bobToken, "drive.read");
+    assert.equal(viaGrant.status, 200, viaGrant.body);
+    assert.equal(viaGrant.raw.toString("utf8"), "hello-from-ada");
+
+    const lockedShare = await drive("POST", "/v1/shares", adaToken, "drive.share", Buffer.from(JSON.stringify({
+      bucket: "docs",
+      key: "hello.txt",
+      ttlSeconds: 120,
+      password: "share-secret",
+      maxDownloads: 1,
+    })), "application/json");
+    assert.equal(lockedShare.status, 201, lockedShare.body);
+    const lockedUrl = new URL(JSON.parse(lockedShare.body).url);
+    const denied = await fetch(`${DRIVE}${lockedUrl.pathname}${lockedUrl.search}`);
+    assert.equal(denied.status, 401);
+    const opened = await fetch(`${DRIVE}${lockedUrl.pathname}${lockedUrl.search}&password=share-secret`);
+    assert.equal(opened.status, 200);
+    assert.equal(await opened.text(), "hello-from-ada");
+    const limited = await fetch(`${DRIVE}${lockedUrl.pathname}${lockedUrl.search}&password=share-secret`);
+    assert.equal(limited.status, 403);
 
     const over = await drive("PUT", "/v1/objects/docs/big.bin", adaToken, "drive.write", Buffer.alloc(30));
     assert.equal(over.status, 403, over.body);
@@ -337,13 +383,14 @@ async function storageCall(method, path, token, body) {
   return { status: response.status, text: await response.text() };
 }
 
-async function drive(method, path, token, purpose, body, contentType) {
+async function drive(method, path, token, purpose, body, contentType, extraHeaders) {
   const response = await fetch(`${DRIVE}${path}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
       "x-cumulus-purpose": purpose,
       ...(body && contentType ? { "content-type": contentType } : {}),
+      ...(extraHeaders ?? {}),
     },
     body,
   });
@@ -412,9 +459,6 @@ async function assertParity(adaToken, bobToken) {
 
   const security = await drive("GET", "/v1/parity?op=security", adaToken, "drive.read");
   assert.equal(security.status, 200, security.body);
-  assert.equal(JSON.parse(security.body).versions, "not kept");
-  const versions = await parityCall(adaToken, "drive.write", { op: "versions", key: "hello.txt" });
-  assert.deepEqual(JSON.parse(versions.body), { versions: [] });
-  const invite = await parityCall(adaToken, "drive.write", { op: "invite", key: "hello.txt", cid: "cid_someone", role: "viewer" });
-  assert.equal(invite.status, 501, invite.body);
+  assert.equal(JSON.parse(security.body).versions, "kept");
+  assert.equal(JSON.parse(security.body).grants, "cid");
 }

@@ -153,6 +153,15 @@ test("folders, trash, versions, shares, grants, chunks, and sealed files", async
     authed("http://localhost:8080/api/drive/ops", cookieA, "POST", JSON.stringify({ op: "identity", cid: "cid_cara" })),
   );
   assert.equal(identity.status, 200);
+  const uuidIdentity = await ops.driveOps(
+    authed(
+      "http://localhost:8080/api/drive/ops",
+      cookieA,
+      "POST",
+      JSON.stringify({ op: "identity", cid: "cid_11111111-2222-4333-8444-555555555555" }),
+    ),
+  );
+  assert.equal(uuidIdentity.status, 200, await uuidIdentity.clone().text());
   const grant = await ops.driveOps(
     authed(
       "http://localhost:8080/api/drive/ops",

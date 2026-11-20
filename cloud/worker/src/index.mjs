@@ -23,7 +23,17 @@ const HOP = new Set([
   "host",
 ]);
 
-const FORWARD = ["authorization", "x-cumulus-purpose", "x-cumulus-tenant", "content-type", "accept"];
+const FORWARD = [
+  "authorization",
+  "x-cumulus-purpose",
+  "x-cumulus-tenant",
+  "x-cumulus-keep-version",
+  "x-cumulus-preview-class",
+  "x-cumulus-sealed-name",
+  "x-share-password",
+  "content-type",
+  "accept",
+];
 const RESPONSE_PASS = new Set([
   "content-type",
   "content-disposition",
@@ -36,18 +46,25 @@ const METHODS = new Set(["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"]);
 
 const DEFAULT_ORIGINS = [
   "https://id.cumuluscloud.app",
+  "https://drive.cumuluscloud.app",
   "https://cloud.cumuluscloud.app",
   "https://mail.cumuluscloud.app",
 ];
+const CANONICAL_DRIVE_HOST = "drive.cumuluscloud.app";
+const LEGACY_CLOUD_HOST = "cloud.cumuluscloud.app";
 
 export function corsAllowlist(env) {
   const raw = env.CUMULUS_CORS_ORIGINS;
   if (raw == null || raw === "") {
-    return [
+    const origins = [
       originForHost(env.CUMULUS_ID_HOST, "id.cumuluscloud.app"),
-      originForHost(env.CUMULUS_CLOUD_HOST, "cloud.cumuluscloud.app"),
+      originForHost(env.CUMULUS_DRIVE_HOST, CANONICAL_DRIVE_HOST),
+      originForHost(env.CUMULUS_CLOUD_HOST, LEGACY_CLOUD_HOST),
       originForHost(env.CUMULUS_MAIL_HOST, "mail.cumuluscloud.app"),
     ];
+    const canonical = `https://${CANONICAL_DRIVE_HOST}`;
+    if (!origins.includes(canonical)) origins.push(canonical);
+    return origins;
   }
   const items = raw.split(",").map((item) => item.trim()).filter(Boolean);
   if (items.length === 0) return null;
@@ -95,8 +112,13 @@ export function functionBase(env) {
 
 export function route(url, env) {
   const path = url.pathname;
-  const cloudHost = String(env.CUMULUS_CLOUD_HOST || "cloud.cumuluscloud.app").toLowerCase();
-  const onCloud = url.hostname.toLowerCase() === cloudHost;
+  const host = url.hostname.toLowerCase();
+  const named = [env.CUMULUS_DRIVE_HOST, env.CUMULUS_CLOUD_HOST]
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+  // drive.cumuluscloud.app is the canonical storage host. cloud.cumuluscloud.app
+  // stays a Drive API host. Neither host is redirected to the other.
+  const onCloud = host === CANONICAL_DRIVE_HOST || host === LEGACY_CLOUD_HOST || named.includes(host);
   // Only Drive API calls leave the console: /api/drive/v1/* (the console's cloud
   // Drive) and /api/healthz. Other /api paths (/api/auth, the console's own
   // /api/drive routes) belong to the console server.
