@@ -16,5 +16,6 @@ Infinitum Corporation®. Civilian and business cyber workloads only.
 
 ```sh
 npm install
+(cd cloud && npm install)   # the Drive API that `npm run dev` mounts at /api/drive
 npm run dev
 ```
