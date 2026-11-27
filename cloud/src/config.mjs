@@ -45,6 +45,7 @@ export function loadConfig(env = process.env) {
   const rootDomain = hostname(env.CUMULUS_ROOT_DOMAIN || DEFAULT_ROOT_DOMAIN, "CUMULUS_ROOT_DOMAIN");
   const idHost = hostname(env.CUMULUS_ID_HOST || `id.${rootDomain}`, "CUMULUS_ID_HOST");
   const cloudHost = hostname(env.CUMULUS_CLOUD_HOST || `cloud.${rootDomain}`, "CUMULUS_CLOUD_HOST");
+  const driveHost = hostname(env.CUMULUS_DRIVE_HOST || `drive.${rootDomain}`, "CUMULUS_DRIVE_HOST");
   const mailHost = hostname(env.CUMULUS_MAIL_HOST || `mail.${rootDomain}`, "CUMULUS_MAIL_HOST");
   // Cumulus://ID: people sign in there (OIDC realm issuer). CID_ISSUER points at a mirror.
   const cidIssuer = (env.CID_ISSUER || `https://${idHost}/realms/cumulus`).replace(/\/+$/, "");
@@ -56,14 +57,20 @@ export function loadConfig(env = process.env) {
   const issuer = (env.CUMULUS_KEYCLOAK_ISSUER || `https://${idHost}/realms/cumulus`).replace(/\/+$/, "");
   const audience = env.CUMULUS_KEYCLOAK_AUDIENCE || `https://${idHost}`;
   const jwksUrl = env.CUMULUS_KEYCLOAK_JWKS_URL || `${issuer}/protocol/openid-connect/certs`;
-  const publicBaseUrl = (env.CUMULUS_PUBLIC_BASE_URL || `https://${cloudHost}`).replace(/\/+$/, "");
+  const publicBaseUrl = (env.CUMULUS_PUBLIC_BASE_URL || `https://${driveHost}`).replace(/\/+$/, "");
   const corsOrigins = env.CUMULUS_CORS_ORIGINS
     ? env.CUMULUS_CORS_ORIGINS.split(",").map((item) => exactOrigin(item))
-    : [exactOrigin(`https://${idHost}`), exactOrigin(`https://${cloudHost}`), exactOrigin(`https://${mailHost}`)];
+    : [
+        exactOrigin(`https://${idHost}`),
+        exactOrigin(`https://${driveHost}`),
+        exactOrigin(`https://${cloudHost}`),
+        exactOrigin(`https://${mailHost}`),
+      ];
   return {
     rootDomain,
     idHost,
     cloudHost,
+    driveHost,
     mailHost,
     cidIssuer,
     cidAudiences,

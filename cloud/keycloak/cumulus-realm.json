@@ -43,8 +43,8 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
-      "redirectUris": ["https://cloud.cumuluscloud.app/*", "http://127.0.0.1:18080/*"],
-      "webOrigins": ["https://cloud.cumuluscloud.app"],
+      "redirectUris": ["https://drive.cumuluscloud.app/*", "https://cloud.cumuluscloud.app/*", "http://127.0.0.1:18080/*"],
+      "webOrigins": ["https://drive.cumuluscloud.app", "https://cloud.cumuluscloud.app"],
       "attributes": {
         "pkce.code.challenge.method": "S256"
       },

@@ -120,7 +120,7 @@ export async function runParity(drive, tenant, payload) {
     if (payload.role !== "viewer" && payload.role !== "editor") {
       throw new HttpError(400, "InvalidRole", "Role must be viewer or editor");
     }
-    if (typeof payload.cid !== "string" || !/^cid_[a-z0-9_]{1,64}$/.test(payload.cid)) {
+    if (typeof payload.cid !== "string" || !/^cid_[a-z0-9_-]{1,64}$/.test(payload.cid)) {
       throw new HttpError(400, "InvalidCid", "Cumulus://ID is not valid");
     }
     const row = await drive.db.getObject(tenant.id, bucket, key);
