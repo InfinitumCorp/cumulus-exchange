@@ -146,6 +146,8 @@ The `cumulus-cloud` Worker is the whole console: the TanStack Start server built
    | `VITE_AUTH_ENABLED` | `true` |
    | `SUPABASE_FUNCTION_URL` | `https://ivqiskeziohbbtkcvlun.supabase.co/functions/v1/drive` |
 
+   `cloud/worker/wrangler.toml` also sets one plain var, `VITE_GROK_EXTENSIONS = "0"`, so the console never loads `https://grok.com/grok-app-builder/extensions.js` on `drive.cumuluscloud.app`. Keep it there and do not set it as a secret: the server reads it on each request, and a deploy keeps the secrets above.
+
    Optional, only to override the defaults: `CID_ISSUER`, `CID_CLIENT_ID`, `CUMULUS_DRIVE_HOST`, `CUMULUS_CLOUD_HOST`, `CUMULUS_ID_HOST`, `CUMULUS_MAIL_HOST`, `CUMULUS_CORS_ORIGINS`. The default Drive CORS allowlist is exactly `https://id.cumuluscloud.app`, `https://drive.cumuluscloud.app`, `https://cloud.cumuluscloud.app`, and `https://mail.cumuluscloud.app`. A `*` value makes the proxy return 503.
 
    Cumulus ID must list `https://cloud.cumuluscloud.app/api/auth/callback/cumulus-id` and `.../callback/cumulus-id-create` as redirect URIs for the `cumulus-cloud` client (cumulus-id `src/clients.ts`). Sign-in fails with a redirect error until it does.

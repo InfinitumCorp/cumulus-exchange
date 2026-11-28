@@ -539,3 +539,28 @@ test("vite plugin bakes og identity as a virtual module", () => {
   assert.match(plugin, /snapshotOgIdentity/);
 });
 
+
+test("the production Worker disables the grok.com extensions script", () => {
+  // The cumulus-cloud Worker (drive.cumuluscloud.app) serves the Drive console.
+  // server/middleware/grok-pwa.ts reads VITE_GROK_EXTENSIONS from process.env on
+  // each request, so the switch must be a Worker var, not a build-time env.
+  const toml = readFileSync(join(TEMPLATE_ROOT, "cloud/worker/wrangler.toml"), "utf8");
+  const vars = toml.match(/^\[vars\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m);
+  assert.ok(vars, "cloud/worker/wrangler.toml has a [vars] table");
+  assert.match(vars[1], /^VITE_GROK_EXTENSIONS\s*=\s*"0"\s*$/m);
+
+  const previous = process.env.VITE_GROK_EXTENSIONS;
+  process.env.VITE_GROK_EXTENSIONS = "0";
+  try {
+    const out = injectGrokPwaHead("<html><head><title>Drive</title></head><body></body></html>", {
+      appName: "Cumulus://Cloud",
+      projectId: "proj-123",
+      host: "drive.cumuluscloud.app",
+    });
+    assert.doesNotMatch(out, /grok-app-builder/);
+    assert.doesNotMatch(out, /<script[^>]+grok\.com/);
+  } finally {
+    if (previous === undefined) delete process.env.VITE_GROK_EXTENSIONS;
+    else process.env.VITE_GROK_EXTENSIONS = previous;
+  }
+});

@@ -14,6 +14,15 @@ workers_dev = true
 no_bundle = true
 rules = [{ type = "ESModule", globs = ["**/*.mjs", "**/*.js"] }]
 
+# Production Drive console: never load https://grok.com/grok-app-builder/extensions.js.
+# A third-party script on this origin could read file names, shares and account
+# details. server/middleware/grok-pwa.ts reads this per request from process.env
+# (it is not baked at build time), so it must stay a Worker var. The Grok App
+# Builder preview is hosted by Grok, not by this Worker, and keeps its banner.
+# Plain vars sit alongside the secrets set with `wrangler secret put`; deploys keep them.
+[vars]
+VITE_GROK_EXTENSIONS = "0"
+
 [assets]
 directory = "../../.output/public"
 binding = "ASSETS"
